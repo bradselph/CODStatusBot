@@ -19,27 +19,25 @@ import (
 )
 
 var (
-	statsLimiter          *limiter.Limiter
-	cachedStats           Stats
-	cachedStatsLock       sync.RWMutex
-	cacheInterval         = 15 * time.Minute
-	NotificationCooldowns = make(map[string]time.Time)
-	NotificationMutex     sync.Mutex
-	store                 *sessions.CookieStore
+	statsLimiter      *limiter.Limiter
+	cachedStats       Stats
+	cachedStatsLock   sync.RWMutex
+	cacheInterval     = 15 * time.Minute
+	NotificationMutex sync.Mutex
+	store             *sessions.CookieStore
 )
 
 type Stats struct {
 	TotalAccounts            int
 	ActiveAccounts           int
-	BannedAccounts           int
+	PermaBannedAccounts      int
+	ShadowBannedAccounts     int
 	TotalUsers               int
 	ChecksLastHour           int
 	ChecksLast24Hours        int
 	TotalBans                int
 	RecentBans               int
 	AverageChecksPerDay      float64
-	MostCheckedAccount       string
-	LeastCheckedAccount      string
 	TotalNotifications       int
 	RecentNotifications      int
 	UsersWithCustomAPIKey    int
@@ -137,6 +135,26 @@ func StatsHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+}
+
+func TermsHandler(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/terms.html")
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to parse terms template")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
+}
+
+func PolicyHandler(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/policy.html")
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to parse policy template")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
 }
 
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +273,8 @@ func getStats() (Stats, error) {
 
 	stats.TotalAccounts, _ = getTotalAccounts()
 	stats.ActiveAccounts, _ = getActiveAccounts()
-	stats.BannedAccounts, _ = getBannedAccounts()
+	stats.PermaBannedAccounts, _ = getPermaBannedAccounts()
+	stats.ShadowBannedAccounts, _ = getShadowBannedAccounts()
 	stats.TotalUsers, _ = getTotalUsers()
 	stats.ChecksLastHour, _ = getChecksInTimeRange(1 * time.Hour)
 	stats.ChecksLast24Hours, _ = getChecksInTimeRange(24 * time.Hour)
@@ -291,9 +310,15 @@ func getActiveAccounts() (int, error) {
 	return int(count), err
 }
 
-func getBannedAccounts() (int, error) {
+func getPermaBannedAccounts() (int, error) {
 	var count int64
 	err := database.DB.Model(&models.Account{}).Where("is_permabanned = ?", true).Count(&count).Error
+	return int(count), err
+}
+
+func getShadowBannedAccounts() (int, error) {
+	var count int64
+	err := database.DB.Model(&models.Account{}).Where("is_shadowbanned = ?", true).Count(&count).Error
 	return int(count), err
 }
 
@@ -310,6 +335,7 @@ func getChecksInTimeRange(duration time.Duration) (int, error) {
 	return int(count), err
 }
 
+// TODO ensure TotalBans is not counting duplicates.
 func getTotalBans() (int, error) {
 	var count int64
 	err := database.DB.Model(&models.Ban{}).Count(&count).Error
@@ -372,11 +398,17 @@ func getAverageAccountsPerUser() (float64, error) {
 
 func getAccountAgeRange() (time.Time, time.Time, error) {
 	var oldestAccount, newestAccount models.Account
-	err := database.DB.Order("created ASC").First(&oldestAccount).Error
+	cutoffDate := time.Date(2003, 1, 1, 0, 0, 0, 0, time.UTC)
+	err := database.DB.Where("created >= ?", cutoffDate).
+		Order("created ASC").First(&oldestAccount).Error
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	err = database.DB.Order("created DESC").First(&newestAccount).Error
+	err = database.DB.Where("created >= ?", cutoffDate).
+		Order("created DESC").First(&newestAccount).Error
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
 	return time.Unix(oldestAccount.Created, 0), time.Unix(newestAccount.Created, 0), err
 }
 

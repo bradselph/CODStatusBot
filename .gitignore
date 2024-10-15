@@ -8,3 +8,4 @@
 /vendor
 codstatusadmin/.env.dashboard
 /templates/01-login
+/taskid check

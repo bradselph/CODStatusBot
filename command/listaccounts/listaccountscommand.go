@@ -107,6 +107,7 @@ func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}
 }
+
 func getBalanceInfo(userID string) string {
 	apiKey, _, err := services.GetUserCaptchaKey(userID)
 	if err != nil {
@@ -115,12 +116,17 @@ func getBalanceInfo(userID string) string {
 	}
 
 	if apiKey != "" {
-		_, balance, err := services.ValidateCaptchaKey(apiKey)
+		provider := "ezcaptcha" // Default provider
+		userSettings, err := services.GetUserSettings(userID)
+		if err == nil && userSettings.PreferredCaptchaProvider != "" {
+			provider = userSettings.PreferredCaptchaProvider
+		}
+		_, balance, err := services.ValidateCaptchaKey(apiKey, provider)
 		if err != nil {
 			logger.Log.WithError(err).Error("Error validating captcha key")
 			return ""
 		}
-		return fmt.Sprintf("\nYour current EZ-Captcha balance: %.2f points", balance)
+		return fmt.Sprintf("\nYour current %s balance: %.2f points", provider, balance)
 	}
 
 	return ""

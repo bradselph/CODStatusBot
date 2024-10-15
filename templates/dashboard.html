@@ -143,7 +143,6 @@
         <button class="toggle-chart-btn" onclick="toggleStatChart(this)">Show Chart</button>
         <div class="stat-item">Total Accounts: <span id="totalAccounts">{{.TotalAccounts}}</span></div>
         <div class="stat-item">Active Accounts: <span id="activeAccounts">{{.ActiveAccounts}}</span></div>
-        <div class="stat-item">Banned Accounts: <span id="bannedAccounts">{{.BannedAccounts}}</span></div>
         <div class="stat-item">Oldest Account: <span>{{.OldestAccount.Format "2006-01-02"}}</span></div>
         <div class="stat-item">Newest Account: <span>{{.NewestAccount.Format "2006-01-02"}}</span></div>
         <div class="chart-container">
@@ -175,8 +174,10 @@
         <button class="toggle-chart-btn" onclick="toggleStatChart(this)">Show Chart</button>
         <div class="stat-item">Total Bans: <span id="totalBans">{{.TotalBans}}</span></div>
         <div class="stat-item">Recent Bans (24h): <span id="recentBans">{{.RecentBans}}</span></div>
+        <div class="stat-item">Shadowbanned: <span id="shadowBannedAccounts">{{.ShadowBannedAccounts}}</span> </div>
         <div class="stat-item">Total Shadowbans: <span id="totalShadowbans">{{.TotalShadowbans}}</span></div>
         <div class="stat-item">Total Temporary Bans: <span id="totalTempbans">{{.TotalTempbans}}</span></div>
+        <div class="stat-item">Total Perma Bans: <span id="permaBannedAccounts">{{.PermaBannedAccounts}}</span></div>
         <div class="chart-container">
             <canvas id="banChart"></canvas>
         </div>
@@ -215,7 +216,8 @@
             .then(data => {
                 document.getElementById('totalAccounts').textContent = data.TotalAccounts;
                 document.getElementById('activeAccounts').textContent = data.ActiveAccounts;
-                document.getElementById('bannedAccounts').textContent = data.BannedAccounts;
+                document.getElementById('permaBannedAccounts').textContent = data.PermaBannedAccounts;
+                document.getElementById('shadowBannedAccounts').textContent = data.ShadowBannedAccounts;
                 document.getElementById('totalUsers').textContent = data.TotalUsers;
                 document.getElementById('usersWithCustomAPIKey').textContent = data.UsersWithCustomAPIKey;
                 document.getElementById('averageAccountsPerUser').textContent = data.AverageAccountsPerUser.toFixed(2);

@@ -47,9 +47,9 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	logger.Log.Infof("User %s initiated a check. API Key set: %v", userID, userSettings.CaptchaAPIKey != "")
+	logger.Log.Infof("User %s initiated a check. API Key set: %v", userID, userSettings.EZCaptchaAPIKey != "" || userSettings.TwoCaptchaAPIKey != "")
 
-	if userSettings.CaptchaAPIKey == "" {
+	if userSettings.EZCaptchaAPIKey == "" && userSettings.TwoCaptchaAPIKey == "" {
 		if !checkRateLimit(userID) {
 			respondToInteraction(s, i, fmt.Sprintf("You're using this command too frequently. Please wait %v before trying again, or set up your own API key for unlimited use.", rateLimit))
 			return

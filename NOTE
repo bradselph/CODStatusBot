@@ -1,0 +1,11 @@
+start logging task ID for recaptcha and the actually api call it was used for to help track down cause of errors
+
+ensure that when running concurrent checks that the returned captcha is the correct one to send for the required account check
+
+
+implment some type of queue system to controll the concurrency of the ban checks as i suspect that the api checks are being rate limited and returning as invalid captcha when they are not
+which in turn is causing the the higher than normal invalid captcha solve rate which cause more captcha solves to be required which in turn causes the api to rate limit again creating a loop of failed ban checks until the the\
+retry limit is reached or a successful ban check is made which causes higher than normal cost of captcha solves
+
+theory on why a incorrect error is being used instead of the real reason potential honey potting of the api for the ban checks! bad practice on activisions part dispicable honestly
+what are the potential reasons for honeypotting in this fashion?

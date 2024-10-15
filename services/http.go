@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -14,15 +15,15 @@ import (
 )
 
 var (
-	url1          = "https://support.activision.com/api/bans/v2/appeal?locale=en"              // Replacement Endpoint for checking account bans
-	url2          = "https://support.activision.com/api/profile?accts=false"                   // Endpoint for retrieving profile information
-	urlVIP        = "https://support.activision.com/services/apexrest/web/vip/isvip?ssoToken=" // Endpoint for checking VIP status
-	urlRedeemCode = "https://profile.callofduty.com/promotions/redeemCode/"                    // Endpoint for redeeming codes
+	checkURL      = os.Getenv("CHECK_ENDPOINT")       //account status check endpoint.
+	profileURL    = os.Getenv("PROFILE_ENDPOINT")     // Endpoint for retrieving profile information
+	checkVIP      = os.Getenv("CHECK_VIP_ENDPOINT")   // Endpoint for checking VIP status
+	redeemCodeURL = os.Getenv("REDEEM_CODE_ENDPOINT") // Endpoint for redeeming codes
 )
 
 func VerifySSOCookie(ssoCookie string) bool {
 	logger.Log.Infof("Verifying SSO cookie: %s", ssoCookie)
-	req, err := http.NewRequest("GET", url2, nil)
+	req, err := http.NewRequest("GET", profileURL, nil)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error creating verification request")
 		return false
@@ -55,25 +56,26 @@ func VerifySSOCookie(ssoCookie string) bool {
 	return true
 }
 
+// TODO move timeout to when the recaptcha is solved to ensure it doesn't timeout before the request is sent
 func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models.Status, error) {
 	logger.Log.Info("Starting CheckAccount function")
 
-	captchaAPIKey, _, err := GetUserCaptchaKey(userID)
+	solver, err := GetCaptchaSolver(userID)
 	if err != nil {
-		return models.StatusUnknown, fmt.Errorf("failed to get user's captcha API key: %w", err)
+		return models.StatusUnknown, fmt.Errorf("failed to get captcha solver: %w", err)
 	}
 
-	gRecaptchaResponse, err := SolveReCaptchaV2WithKey(captchaAPIKey)
+	gRecaptchaResponse, err := solver.SolveReCaptchaV2(siteKey, pageURL)
 	if err != nil {
 		return models.StatusUnknown, fmt.Errorf("failed to solve reCAPTCHA: %w", err)
 	}
 
-	logger.Log.Info("Successfully solved reCAPTCHA")
+	logger.Log.Info("Successfully received reCAPTCHA response")
 
-	banAppealUrl := url1 + "&g-cc=" + gRecaptchaResponse
-	logger.Log.WithField("url", banAppealUrl).Info("Constructed ban appeal URL")
+	checkrequest := checkURL + "?locale=en" + "&g-cc=" + gRecaptchaResponse
+	logger.Log.WithField("url", checkrequest).Info("Constructed account check request")
 
-	req, err := http.NewRequest("GET", banAppealUrl, nil)
+	req, err := http.NewRequest("GET", checkrequest, nil)
 	if err != nil {
 		return models.StatusUnknown, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
@@ -104,7 +106,6 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		defer func(Body io.ReadCloser) {
 			err := Body.Close()
 			if err != nil {
-
 			}
 		}(resp.Body)
 
@@ -185,7 +186,7 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 
 func CheckAccountAge(ssoCookie string) (int, int, int, int64, error) {
 	logger.Log.Info("Starting CheckAccountAge function")
-	req, err := http.NewRequest("GET", url2, nil)
+	req, err := http.NewRequest("GET", profileURL, nil)
 	if err != nil {
 		return 0, 0, 0, 0, errors.New("failed to create HTTP request to check account age")
 	}
@@ -237,7 +238,7 @@ func CheckAccountAge(ssoCookie string) (int, int, int, int64, error) {
 
 func CheckVIPStatus(ssoCookie string) (bool, error) {
 	logger.Log.Info("Checking VIP status")
-	req, err := http.NewRequest("GET", urlVIP+ssoCookie, nil)
+	req, err := http.NewRequest("GET", checkVIP+ssoCookie, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create HTTP request to check VIP status: %w", err)
 	}
@@ -279,7 +280,7 @@ func CheckVIPStatus(ssoCookie string) (bool, error) {
 func RedeemCode(ssoCookie, code string) (string, error) {
 	logger.Log.Infof("Attempting to redeem code: %s", code)
 
-	req, err := http.NewRequest("POST", urlRedeemCode, strings.NewReader(fmt.Sprintf("code=%s", code)))
+	req, err := http.NewRequest("POST", redeemCodeURL, strings.NewReader(fmt.Sprintf("code=%s", code)))
 	if err != nil {
 		return "", fmt.Errorf("failed to create HTTP request to redeem code: %w", err)
 	}

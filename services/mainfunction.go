@@ -365,7 +365,13 @@ func CheckAccounts(s *discordgo.Session) {
 			}
 
 			for _, account := range accountsToUpdate {
-				status, err := CheckAccount(account.SSOCookie, account.UserID, userSettings.CaptchaAPIKey)
+				var captchaAPIKey string
+				if userSettings.PreferredCaptchaProvider == "2captcha" {
+					captchaAPIKey = userSettings.TwoCaptchaAPIKey
+				} else {
+					captchaAPIKey = userSettings.EZCaptchaAPIKey
+				}
+				status, err := CheckAccount(account.SSOCookie, account.UserID, captchaAPIKey)
 				if err != nil {
 					logger.Log.WithError(err).Errorf("Error checking account %s", account.Title)
 					NotifyAdminWithCooldown(s, fmt.Sprintf("Error checking account %s: %v", account.Title, err), 5*time.Minute)

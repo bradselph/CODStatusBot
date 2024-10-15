@@ -121,6 +121,7 @@ func loadEnvironmentVariables() error {
 		"ADMIN_PORT",
 		"ADMIN_USERNAME",
 		"ADMIN_PASSWORD",
+		"SESSION_KEY",
 		"CHECK_INTERVAL",
 		"NOTIFICATION_INTERVAL",
 		"COOLDOWN_DURATION",
@@ -152,6 +153,8 @@ func startAdminDashboard() *http.Server {
 	r := mux.NewRouter()
 	r.HandleFunc("/", admin.HomeHandler)
 	r.HandleFunc("/help", admin.HelpHandler)
+	r.HandleFunc("/terms", admin.TermsHandler)
+	r.HandleFunc("/policy", admin.PolicyHandler)
 	r.HandleFunc("/admin/login", admin.LoginHandler)
 	r.HandleFunc("/admin/logout", admin.LogoutHandler)
 	r.HandleFunc("/admin", admin.AuthMiddleware(admin.DashboardHandler))

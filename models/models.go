@@ -33,7 +33,9 @@ type Account struct {
 type UserSettings struct {
 	gorm.Model
 	UserID                       string    `gorm:"uniqueIndex"`
-	CaptchaAPIKey                string    // User's own API key, if provided
+	EZCaptchaAPIKey              string    // User's own EZCaptcha API key, if provided
+	TwoCaptchaAPIKey             string    // User's own 2captcha API key, if provided
+	PreferredCaptchaProvider     string    `gorm:"default:'ezcaptcha'"` // 'ezcaptcha' or '2captcha'
 	CheckInterval                int       // In minutes
 	NotificationInterval         float64   // In hours
 	CooldownDuration             float64   // In hours
