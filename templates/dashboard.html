@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>COD Status Bot Admin Dashboard</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" integrity="sha512-iBBXm8fW90+nuLcSKlbmrPcLa0OT92xO1BIsZ+ywDWZCvqsWgccV3gFoRBv0z+8dLJgyAHIhR35VZc2oM/gI1w==" crossorigin="anonymous">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js" integrity="sha512-k72Y+sws0148dhTBT8Nyro04RwjANbBxNCZ80xKT3FdHNON55/us15Ju0YQ2dD0uzyBJ5YjXnbUcLWaCaw3rCg==" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body, h1, h2, p, ul {
             margin: 0;
@@ -143,7 +143,6 @@
         <button class="toggle-chart-btn" onclick="toggleStatChart(this)">Show Chart</button>
         <div class="stat-item">Total Accounts: <span id="totalAccounts">{{.TotalAccounts}}</span></div>
         <div class="stat-item">Active Accounts: <span id="activeAccounts">{{.ActiveAccounts}}</span></div>
-        <div class="stat-item">Banned Accounts: <span id="bannedAccounts">{{.BannedAccounts}}</span></div>
         <div class="stat-item">Oldest Account: <span>{{.OldestAccount.Format "2006-01-02"}}</span></div>
         <div class="stat-item">Newest Account: <span>{{.NewestAccount.Format "2006-01-02"}}</span></div>
         <div class="chart-container">
@@ -175,8 +174,10 @@
         <button class="toggle-chart-btn" onclick="toggleStatChart(this)">Show Chart</button>
         <div class="stat-item">Total Bans: <span id="totalBans">{{.TotalBans}}</span></div>
         <div class="stat-item">Recent Bans (24h): <span id="recentBans">{{.RecentBans}}</span></div>
+        <div class="stat-item">Shadowbanned: <span id="shadowBannedAccounts">{{.ShadowBannedAccounts}}</span> </div>
         <div class="stat-item">Total Shadowbans: <span id="totalShadowbans">{{.TotalShadowbans}}</span></div>
         <div class="stat-item">Total Temporary Bans: <span id="totalTempbans">{{.TotalTempbans}}</span></div>
+        <div class="stat-item">Total Perma Bans: <span id="permaBannedAccounts">{{.PermaBannedAccounts}}</span></div>
         <div class="chart-container">
             <canvas id="banChart"></canvas>
         </div>
@@ -215,7 +216,8 @@
             .then(data => {
                 document.getElementById('totalAccounts').textContent = data.TotalAccounts;
                 document.getElementById('activeAccounts').textContent = data.ActiveAccounts;
-                document.getElementById('bannedAccounts').textContent = data.BannedAccounts;
+                document.getElementById('permaBannedAccounts').textContent = data.PermaBannedAccounts;
+                document.getElementById('shadowBannedAccounts').textContent = data.ShadowBannedAccounts;
                 document.getElementById('totalUsers').textContent = data.TotalUsers;
                 document.getElementById('usersWithCustomAPIKey').textContent = data.UsersWithCustomAPIKey;
                 document.getElementById('averageAccountsPerUser').textContent = data.AverageAccountsPerUser.toFixed(2);

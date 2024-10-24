@@ -1,13 +1,8 @@
 package main
 
 import (
-	"CODStatusBot/admin"
-	"CODStatusBot/bot"
-	"CODStatusBot/database"
-	"CODStatusBot/logger"
-	"CODStatusBot/models"
-	"CODStatusBot/services"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +10,13 @@ import (
 	"runtime/debug"
 	"syscall"
 	"time"
+
+	"github.com/bradselph/CODStatusBot/bot"
+	"github.com/bradselph/CODStatusBot/database"
+	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/services"
+	"github.com/bradselph/CODStatusBot/webserver"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/gorilla/mux"
@@ -32,7 +34,7 @@ func main() {
 
 	if err := run(); err != nil {
 		logger.Log.WithError(err).Error("Bot encountered an error and is shutting down")
-		os.Exit(1)
+		logger.Log.Fatal("Exiting due to error")
 	}
 }
 
@@ -121,6 +123,7 @@ func loadEnvironmentVariables() error {
 		"ADMIN_PORT",
 		"ADMIN_USERNAME",
 		"ADMIN_PASSWORD",
+		"SESSION_KEY",
 		"CHECK_INTERVAL",
 		"NOTIFICATION_INTERVAL",
 		"COOLDOWN_DURATION",
@@ -130,6 +133,7 @@ func loadEnvironmentVariables() error {
 		"GLOBAL_NOTIFICATION_COOLDOWN",
 		"COOKIE_EXPIRATION_WARNING",
 		"TEMP_BAN_UPDATE_INTERVAL",
+		"STATIC_DIR",
 	}
 
 	for _, envVar := range requiredEnvVars {
@@ -150,29 +154,30 @@ func initializeDatabase() error {
 
 func startAdminDashboard() *http.Server {
 	r := mux.NewRouter()
-	r.HandleFunc("/", admin.HomeHandler)
-	r.HandleFunc("/help", admin.HelpHandler)
-	r.HandleFunc("/admin/login", admin.LoginHandler)
-	r.HandleFunc("/admin/logout", admin.LogoutHandler)
-	r.HandleFunc("/admin", admin.AuthMiddleware(admin.DashboardHandler))
-	r.HandleFunc("/admin/stats", admin.AuthMiddleware(admin.StatsHandler))
+	r.HandleFunc("/", webserver.HomeHandler)
+	r.HandleFunc("/help", webserver.HelpHandler)
+	r.HandleFunc("/terms", webserver.TermsHandler)
+	r.HandleFunc("/policy", webserver.PolicyHandler)
+	r.HandleFunc("/admin/login", webserver.LoginHandler)
+	r.HandleFunc("/admin/logout", webserver.LogoutHandler)
+	r.HandleFunc("/admin", webserver.AuthMiddleware(webserver.DashboardHandler))
+	r.HandleFunc("/admin/stats", webserver.AuthMiddleware(webserver.StatsHandler))
+	r.HandleFunc("/api/server-count", webserver.ServerCountHandler)
 
-	staticDir := "/home/container/"
+	staticDir := os.Getenv("STATIC_DIR")
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 
 	port := os.Getenv("ADMIN_PORT")
-	if port == "" {
-		port = "443"
-	}
 
 	server := &http.Server{
-		Addr:    ":" + port,
-		Handler: r,
+		Addr:              ":" + port,
+		Handler:           r,
+		ReadHeaderTimeout: 20 * time.Second,
 	}
 
 	go func() {
 		logger.Log.Infof("Admin dashboard starting on port %s", port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Log.WithError(err).Fatal("Failed to start admin dashboard")
 		}
 	}()
@@ -194,7 +199,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
 		}
 	}()
 
-	go admin.StartStatsCaching()
+	go webserver.StartStatsCaching()
 	go services.ScheduleBalanceChecks(s)
 
 	go func() {
@@ -206,7 +211,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
 				if err := services.SendAnnouncementToAllUsers(s); err != nil {
 					logger.Log.WithError(err).Error("Failed to send global announcement")
 				}
-				time.Sleep(24 * time.Hour) // Check once a day
+				time.Sleep(24 * time.Hour)
 			}
 		}
 	}()

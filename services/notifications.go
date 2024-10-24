@@ -1,22 +1,23 @@
 package services
 
 import (
-	"CODStatusBot/admin"
-	"CODStatusBot/database"
-	"CODStatusBot/logger"
-	"CODStatusBot/models"
 	"fmt"
-	"github.com/bwmarrin/discordgo"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/bradselph/CODStatusBot/database"
+	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/webserver"
+	"github.com/bwmarrin/discordgo"
 )
 
 func NotifyAdminWithCooldown(s *discordgo.Session, message string, cooldownDuration time.Duration) {
-	admin.NotificationMutex.Lock()
-	defer admin.NotificationMutex.Unlock()
+	webserver.NotificationMutex.Lock()
+	defer webserver.NotificationMutex.Unlock()
 
-	notificationType := "admin_" + strings.Split(message, " ")[0] // Use first word of message as type
+	notificationType := "admin_" + strings.Split(message, " ")[0]
 
 	_, found := adminNotificationCache.Get(notificationType)
 	if !found {
@@ -43,7 +44,7 @@ func NotifyAdmin(s *discordgo.Session, message string) {
 	embed := &discordgo.MessageEmbed{
 		Title:       "Admin Notification",
 		Description: message,
-		Color:       0xFF0000, // Red color for admin notifications
+		Color:       0xFF0000,
 		Timestamp:   time.Now().Format(time.RFC3339),
 	}
 
@@ -219,7 +220,7 @@ func SendConsolidatedDailyUpdate(s *discordgo.Session, userID string, userSettin
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("%.2f Hour Update - Multiple Accounts", userSettings.NotificationInterval),
 		Description: "Here's an update on your monitored accounts:",
-		Color:       0x00ff00, // Green color
+		Color:       0x00ff00,
 		Fields:      embedFields,
 		Timestamp:   time.Now().Format(time.RFC3339),
 	}
@@ -261,7 +262,7 @@ func NotifyCookieExpiringSoon(s *discordgo.Session, accounts []models.Account) e
 	embed := &discordgo.MessageEmbed{
 		Title:       "SSO Cookie Expiration Warning",
 		Description: "The following accounts have SSO cookies that will expire soon:",
-		Color:       0xFFA500, // Orange color for warning
+		Color:       0xFFA500,
 		Fields:      embedFields,
 		Timestamp:   time.Now().Format(time.RFC3339),
 	}
@@ -287,7 +288,7 @@ func NotifyUserAboutDisabledAccount(s *discordgo.Session, account models.Account
 		Title: "Account Disabled",
 		Description: fmt.Sprintf("Your account '%s' has been disabled. Reason: %s\n\n"+
 			"To re-enable monitoring, please address the issue and use the /togglecheck command to re-enable your account.", account.Title, reason),
-		Color:     0xFF0000, // Red color for alert
+		Color:     0xFF0000,
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
@@ -298,26 +299,44 @@ func NotifyUserAboutDisabledAccount(s *discordgo.Session, account models.Account
 }
 
 func CheckAndNotifyBalance(s *discordgo.Session, userID string, balance float64) {
-	canSend, checkErr := CheckNotificationCooldown(userID, "balance", 24*time.Hour)
-	if checkErr != nil {
-		logger.Log.WithError(checkErr).Errorf("Failed to check balance notification cooldown for user %s", userID)
-		return
-	}
-	if !canSend {
-		logger.Log.Infof("Skipping balance notification for user %s due to cooldown", userID)
+	userSettings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Errorf("Failed to get user settings for balance check: %s", userID)
 		return
 	}
 
-	if balance < balanceNotificationThreshold {
+	if time.Since(userSettings.LastBalanceNotification) < 24*time.Hour {
+		return
+	}
+
+	var thresholds = map[string]float64{
+		"ezcaptcha": 1000, // EZCaptcha threshold
+		"2captcha":  1.00, // 2captcha threshold (different scale)
+	}
+
+	threshold := thresholds[userSettings.PreferredCaptchaProvider]
+	if balance < threshold {
 		embed := &discordgo.MessageEmbed{
-			Title:       "Low EZ-Captcha Balance Alert",
-			Description: fmt.Sprintf("Your EZ-Captcha balance is currently %.2f points, which is below the recommended threshold of %d points.", balance, balanceNotificationThreshold),
-			Color:       0xFFA500, // Orange color for warning
+			Title: fmt.Sprintf("Low %s Balance Alert", userSettings.PreferredCaptchaProvider),
+			Description: fmt.Sprintf("Your %s balance is currently %.2f points, which is below the recommended threshold of %.2f points.",
+				userSettings.PreferredCaptchaProvider, balance, threshold),
+			Color: 0xFFA500,
 			Fields: []*discordgo.MessageEmbedField{
 				{
-					Name:   "Action Required",
-					Value:  "Please recharge your EZ-Captcha balance to ensure uninterrupted service for your account checks.",
+					Name: "Action Required",
+					Value: fmt.Sprintf("Please recharge your %s balance to ensure uninterrupted service for your account checks.",
+						userSettings.PreferredCaptchaProvider),
 					Inline: false,
+				},
+				{
+					Name:   "Current Provider",
+					Value:  userSettings.PreferredCaptchaProvider,
+					Inline: true,
+				},
+				{
+					Name:   "Current Balance",
+					Value:  fmt.Sprintf("%.2f", balance),
+					Inline: true,
 				},
 			},
 			Timestamp: time.Now().Format(time.RFC3339),
@@ -325,7 +344,7 @@ func CheckAndNotifyBalance(s *discordgo.Session, userID string, balance float64)
 
 		var account models.Account
 		if err := database.DB.Where("user_id = ?", userID).First(&account).Error; err != nil {
-			logger.Log.WithError(err).Errorf("Failed to get an account for user %s", userID)
+			logger.Log.WithError(err).Errorf("Failed to get account for balance notification: %s", userID)
 			return
 		}
 
@@ -335,10 +354,97 @@ func CheckAndNotifyBalance(s *discordgo.Session, userID string, balance float64)
 			return
 		}
 
-		if updateErr := UpdateNotificationTimestamp(userID, "balance"); updateErr != nil {
-			logger.Log.WithError(updateErr).Errorf("Failed to update balance notification timestamp for user %s", userID)
+		userSettings.LastBalanceNotification = time.Now()
+		if err := database.DB.Save(&userSettings).Error; err != nil {
+			logger.Log.WithError(err).Errorf("Failed to update LastBalanceNotification for user %s", userID)
 		}
 	}
+}
+
+func ScheduleBalanceChecks(s *discordgo.Session) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		var users []models.UserSettings
+		if err := database.DB.Find(&users).Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to fetch users for balance check")
+			continue
+		}
+
+		for _, user := range users {
+			if user.EZCaptchaAPIKey == "" && user.TwoCaptchaAPIKey == "" {
+				continue
+			}
+
+			var apiKey string
+			var provider string
+			if user.PreferredCaptchaProvider == "2captcha" && user.TwoCaptchaAPIKey != "" {
+				apiKey = user.TwoCaptchaAPIKey
+				provider = "2captcha"
+			} else if user.PreferredCaptchaProvider == "ezcaptcha" && user.EZCaptchaAPIKey != "" {
+				apiKey = user.EZCaptchaAPIKey
+				provider = "ezcaptcha"
+			} else {
+				continue
+			}
+
+			isValid, balance, err := ValidateCaptchaKey(apiKey, provider)
+			if err != nil {
+				logger.Log.WithError(err).Errorf("Failed to validate %s key for user %s", provider, user.UserID)
+				continue
+			}
+
+			if !isValid {
+				if err := DisableUserCaptcha(s, user.UserID, fmt.Sprintf("Invalid %s API key", provider)); err != nil {
+					logger.Log.WithError(err).Errorf("Failed to disable captcha for user %s", user.UserID)
+				}
+				continue
+			}
+
+			user.CaptchaBalance = balance
+			user.LastBalanceCheck = time.Now()
+			if err := database.DB.Save(&user).Error; err != nil {
+				logger.Log.WithError(err).Errorf("Failed to update balance for user %s", user.UserID)
+				continue
+			}
+
+			CheckAndNotifyBalance(s, user.UserID, balance)
+		}
+	}
+}
+
+func DisableUserCaptcha(s *discordgo.Session, userID string, reason string) error {
+	var settings models.UserSettings
+	if err := database.DB.Where("user_id = ?", userID).First(&settings).Error; err != nil {
+		return err
+	}
+
+	settings.EZCaptchaAPIKey = ""
+	settings.TwoCaptchaAPIKey = ""
+	settings.PreferredCaptchaProvider = "ezcaptcha"
+	settings.CustomSettings = false
+	settings.CheckInterval = defaultSettings.CheckInterval
+	settings.NotificationInterval = defaultSettings.NotificationInterval
+
+	if err := database.DB.Save(&settings).Error; err != nil {
+		return err
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title: "Captcha Service Disabled",
+		Description: fmt.Sprintf("Your captcha service has been disabled. Reason: %s\n"+
+			"The bot will now use default settings and the default captcha provider.", reason),
+		Color:     0xFF0000,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	var account models.Account
+	if err := database.DB.Where("user_id = ?", userID).First(&account).Error; err != nil {
+		return err
+	}
+
+	return SendNotification(s, account, embed, "", "captcha_disabled")
 }
 
 func SendTempBanUpdateNotification(s *discordgo.Session, account models.Account, remainingTime time.Duration) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/logger"
 )
 
 func DecodeSSOCookie(encodedStr string) (int64, error) {

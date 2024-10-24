@@ -5,11 +5,11 @@ import (
 	"strconv"
 	"strings"
 
-	"CODStatusBot/database"
-	"CODStatusBot/logger"
-	"CODStatusBot/models"
-	"CODStatusBot/services"
-	"CODStatusBot/utils"
+	"github.com/bradselph/CODStatusBot/database"
+	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/services"
+	"github.com/bradselph/CODStatusBot/utils"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -33,8 +33,8 @@ func CommandSetCheckInterval(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 
-	if userSettings.CaptchaAPIKey == "" {
-		respondToInteraction(s, i, "You need to set your own EZ-Captcha API key using the /setcaptchaservice command before you can modify these settings.")
+	if userSettings.EZCaptchaAPIKey == "" && userSettings.TwoCaptchaAPIKey == "" {
+		respondToInteraction(s, i, "You need to set your own EZ-Captcha or 2captcha API key using the /setcaptchaservice command before you can modify these settings.")
 		return
 	}
 

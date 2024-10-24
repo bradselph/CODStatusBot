@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bwmarrin/discordgo"
 )
 

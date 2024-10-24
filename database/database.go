@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/models"
 
-	"CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/logger"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"

@@ -1,60 +1,89 @@
 ## Discord Settings
-DISCORD_TOKEN=token
-DEVELOPER_ID=your-discord-user-id
+DISCORD_TOKEN=
+DEVELOPER_ID=
 
 ## Mysql Database Settings
-DB_USER=your-database-username
-DB_PASSWORD=your-database password
-DB_NAME=your-database-name
-DB_HOST=your-database-host
-DB_PORT=your-database-port
+DB_USER=
+DB_PASSWORD=
+DB_NAME=
+DB_HOST=
+DB_PORT=
 
 ##DO NOT CHANGE
-DB_VAR=?parseTime=true
+DB_VAR=?parseTime=true # setting for mysql database connection regarding timezone do not change!
 
-## EZCaptcha Settings
-EZAPPID=ez-dev-id
-EZCAPTCHA_CLIENT_KEY=the-client-key-from-solving-service #this is the api key for the reCAPTCHA solving service
-RECAPTCHA_SITE_KEY=6LdB2NUpAAAAANcdcy9YcjBOBD4rY-TIHOeolkkk #this is the banappeal v2 site key as of 07/24/2024 may change in the future
-RECAPTCHA_URL=https://support.activision.com #this doesn't really change unless using a different api endpoint
+## Captcha Solver Settings
+EZAPPID=
+EZCAPTCHA_CLIENT_KEY=
+RECAPTCHA_SITE_KEY=
+RECAPTCHA_URL=
+SITE_ACTION=
 
-
-## Bot Settings (Default fallback if data is not found)
-CHECK_INTERVAL=60
-NOTIFICATION_INTERVAL=24
-COOLDOWN_DURATION=6
-STATUS_CHANGE_COOLDOWN=1
-GLOBAL_NOTIFICATION_COOLDOWN=1
-
+## Solver Settings
+MAX_RETRIES=
 
 ## Bot Settings
-COOLDOWN_DURATION=6 #hours
-CHECK_INTERVAL=15 #minutes
-NOTIFICATION_INTERVAL=24 #hours
-SLEEP_DURATION=1 #minutes
-COOKIE_CHECK_INTERVAL_PERMABAN=24 #hours
-STATUS_CHANGE_COOLDOWN=1 #hours
-GLOBAL_NOTIFICATION_COOLDOWN=1 #hours
+COOLDOWN_DURATION=
+CHECK_INTERVAL=
+NOTIFICATION_INTERVAL=
+SLEEP_DURATION=
+COOKIE_CHECK_INTERVAL_PERMABAN=
+STATUS_CHANGE_COOLDOWN=
+GLOBAL_NOTIFICATION_COOLDOWN=
+COOKIE_EXPIRATION_WARNING=
+TEMP_BAN_UPDATE_INTERVAL=
 
-## Rate limit settings
-CHECK_NOW_RATE_LIMIT=900 #seconds
+# Activision/COD Endpoints
+CHECK_ENDPOINT=
+PROFILE_ENDPOINT=
+CHECK_VIP_ENDPOINT=
+REDEEM_CODE_ENDPOINT=
+
+## Admin Panel Settings
+SESSION_KEY=
+ADMIN_PORT=
+ADMIN_USERNAME=
+ADMIN_PASSWORD=
+
+## Rate Limiting
+CHECK_NOW_RATE_LIMIT=
+DEFAULT_RATE_LIMIT=
+
+
+
 
 ## Settings Explained
+#
 # DISCORD_TOKEN is your Discord bot token
-# DEVELOPER_ID is your Discord user id that you'll receive anonymous feedback at
-# BOT_OWNER_ID is your discord user id like before
+# DEVELOPER_ID is your Discord user id that you'll receive posibley anonymous feedback at
 # DB_USER is the username for your database
 # DB_PASSWORD is the password for your database
+# DB_NAME is the name of your database
 # DB_HOST is the host of your database
 # DB_PORT is the port number on which your database is running
-# DB_NAME is the name of your database
-# DB_VAR is the additional parameters for your database
-# All the settings are in minutes except for NOTIFICATION_INTERVAL which is in hours
-# COOLDOWN_DURATION is the duration (in hours) for the cooldown period for invalid cookie notifications. default is 6 hour
-# CHECK_INTERVAL is the interval (in minutes) at which an account is checked. default is 15 minutes
-# NOTIFICATION_INTERVAL is the interval (in hours) at which a reminder notification is sent. default is 24 hours
-# SLEEP_DURATION is the duration (in minutes) for which the program sleeps before checking every account again. default is 1 minute
-# COOKIE_CHECK_INTERVAL_PERMABAN is the interval (in hours) at which a permaban account cookie is checked. default is 24 hours
-# STATUS_CHANGE_COOLDOWN is the duration (in hours) for the cooldown period between status change notifications. default is 1 hour
-# GLOBAL_NOTIFICATION_COOLDOWN is the duration (in hours) for the global cooldown period between notifications for a user. default is 1 hour
-# CHECK_NOW_RATE_LIMIT is the limit for how often a user can use the check now command. default is 60 seconds
+# DB_VAR=?parseTime=true # setting for mysql database connection regarding timezone do not change!
+# EZAPPID is the application id set by ezcaptcha to credit dev for tokens spent over time.
+# EZCAPTCHA_CLIENT_KEY is the api key for ezcaptcha
+# RECAPTCHA_SITE_KEY is sitekey for reCaptcha
+# RECAPTCHA_URL is url of the page where the recaptcha is being solved for.
+# SITE_ACTION is Site action for reCaptcha
+# MAX_RETRIES is max retries for captcha solving default 3
+# COOLDOWN_DURATION is Cooldown duration for invalid cookie notifications 6 (in hours)
+# CHECK_INTERVAL is interval between account checks 15 (in minutes)
+# NOTIFICATION_INTERVAL is Notification interval for daily updates 24 (in hours)
+# SLEEP_DURATION is Sleep duration for the account checking loop 1 (in minutes)
+# COOKIE_CHECK_INTERVAL_PERMABAN is Check interval for permabanned accounts 24 (in hours)
+# STATUS_CHANGE_COOLDOWN is Cooldown duration for status change notifications 1 (in hours)
+# GLOBAL_NOTIFICATION_COOLDOWN is the global cooldown for notifications per user 1 (in hours)
+# COOKIE_EXPIRATION_WARNING is Time before cookie expiration to send a warning 24 (in hours)
+# TEMP_BAN_UPDATE_INTERVAL is Interval for temporary ban update notifications 24 (in hours)
+# CHECK_ENDPOINT is Endpoint for checking bans
+# PROFILE_ENDPOINT is Endpoint for getting profile information
+# CHECK_VIP_ENDPOINT is Endpoint for checking if a user is a VIP
+# REDEEM_CODE_ENDPOINT is Endpoint for redeeming codes
+# SESSION_KEY is Session key for admin panel
+# ADMIN_PORT is Port number to the serves admin panel. Should be set to the port assigned by the reverse proxy host example: us1.bot-hosting.net:20754 port would be 20754.
+# ADMIN_USERNAME is the username for the admin panel.
+# ADMIN_PASSWORD is the password for the admin panel.
+# CHECK_NOW_RATE_LIMIT is Rate limit for the check now command 36000 (in seconds)
+# DEFAULT_RATE_LIMIT is Default rate limit for regular account checks 15 (in minutes)

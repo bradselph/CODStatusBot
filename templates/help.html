@@ -4,333 +4,249 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>COD Status Bot - Help Center</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" integrity="sha512-iBBXm8fW90+nuLcSKlbmrPcLa0OT92xO1BIsZ+ywDWZCvqsWgccV3gFoRBv0z+8dLJgyAHIhR35VZc2oM/gI1w==" crossorigin="anonymous">
-    <style>
-        :root {
-            --primary-color: #7289DA;
-            --secondary-color: #2C2F33;
-            --accent-color: #99AAB5;
-            --text-color: #FFFFFF;
-            --background-color: #23272A;
-        }
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: var(--text-color);
-            background-color: var(--background-color);
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 20px;
-        }
-        header {
-            background-color: var(--secondary-color);
-            padding: 20px 0;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        nav {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .logo {
-            font-size: 1.8rem;
-            font-weight: bold;
-            color: var(--primary-color);
-            text-decoration: none;
-        }
-        .nav-links a {
-            color: var(--text-color);
-            text-decoration: none;
-            margin-left: 20px;
-            transition: color 0.3s ease;
-        }
-        .nav-links a:hover {
-            color: var(--primary-color);
-        }
-        .help-content {
-            padding: 60px 0;
-        }
-        .help-section {
-            background-color: var(--secondary-color);
-            border-radius: 10px;
-            padding: 30px;
-            margin-bottom: 40px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            transition: transform 0.3s ease;
-        }
-        .help-section:hover {
-            transform: translateY(-5px);
-        }
-        h1, h2 {
-            color: var(--primary-color);
-            margin-bottom: 20px;
-        }
-        h3 {
-            margin-top: 20px;
-            margin-bottom: 10px;
-            color: var(--accent-color);
-        }
-        ul, ol {
-            margin-left: 20px;
-            margin-bottom: 20px;
-        }
-        code {
-            background-color: rgba(255,255,255,0.1);
-            color: var(--accent-color);
-            padding: 2px 5px;
-            border-radius: 3px;
-            font-family: 'Courier New', Courier, monospace;
-        }
-        .collapsible {
-            background-color: var(--secondary-color);
-            color: var(--text-color);
-            cursor: pointer;
-            padding: 18px;
-            width: 100%;
-            border: none;
-            text-align: left;
-            outline: none;
-            font-size: 15px;
-            transition: 0.4s;
-            border-radius: 5px;
-        }
-        .active, .collapsible:hover {
-            background-color: var(--primary-color);
-        }
-        .collapsible:after {
-            content: '\002B';
-            color: var(--text-color);
-            font-weight: bold;
-            float: right;
-            margin-left: 5px;
-        }
-        .active:after {
-            content: "\2212";
-        }
-        .content {
-            padding: 0 18px;
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.2s ease-out;
-            background-color: var(--background-color);
-        }
-    </style>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"
+          integrity="sha512-iBBXm8fW90+nuLcSKlbmrPcLa0OT92xO1BIsZ+ywDWZCvqsWgccV3gFoRBv0z+8dLJgyAHIhR35VZc2oM/gI1w=="
+          crossorigin="anonymous">
 </head>
 <body>
-    <header>
-    <nav class="container">
-        <a href="/" class="logo">COD Status Bot</a>
-        <div class="nav-links">
-            <a href="/#features">Features</a>
-            <a href="/#how-it-works">How It Works</a>
-            <a href="/#stats">Stats</a>
-            <a href="/help">Help</a>
-        </div>
-    </nav>
-</header>
-<div class="help-content">
+<header>
     <div class="container">
-        <h1>COD Status Bot Help Center</h1>
+        <nav aria-label="Header Navigation">
+            <a href="/" class="logo">COD Status Bot</a>
+            <div class="nav-links">
+                <a href="/#features">Features</a>
+                <a href="/#how-it-works">How It Works</a>
+                <a href="/#stats">Stats</a>
+                <a href="/help">Help</a>
+            </div>
+        </nav>
+    </div>
+</header>
+<div class="content-wrapper">
+    <div class="help-content">
+        <div class="container">
+            <h1>COD Status Bot Help Center</h1>
 
-        <div class="help-section">
-            <h2>Getting Started</h2>
-            <p>Welcome to the COD Status Bot help page. Here's how to get started:</p>
-            <ol>
-                <li>Add the bot to your Discord server using <a href="https://discord.com/application-directory/1211857854324015124" rel="noopener">this link</a>.</li>
-                <li>Set up your EZ-Captcha API key (optional but recommended).</li>
-                <li>Add your Call of Duty account(s) for monitoring.</li>
-            </ol>
-        </div>
+            <div class="help-section">
+                <h2>Getting Started</h2>
+                <p>Welcome to the COD Status Bot help page. Here's how to get started:</p>
+                <ol>
+                    <li>Add the bot to your Discord server using <a
+                            href="https://discord.com/application-directory/1211857854324015124" rel="noopener">this
+                        link</a>.
+                    </li>
+                    <li>Set up your EZ-Captcha API key (optional but recommended).</li>
+                    <li>Add your Call of Duty account(s) for monitoring.</li>
+                </ol>
+            </div>
 
-        <div class="help-section">
-            <h2>Commands</h2>
-            <button class="collapsible">/accountage</button>
-            <div class="content">
-                <p>Check the age of your monitored Call of Duty account(s).</p>
-                <p>Usage: <code>/accountage</code></p>
+            <div class="help-section">
+                <h2>Commands</h2>
+                <button class="collapsible">/accountage</button>
+                <div class="content">
+                    <p>Check the age of your monitored Call of Duty account(s).</p>
+                    <p>Usage: <code>/accountage</code></p>
+                </div>
+                <button class="collapsible">/accountlogs</button>
+                <div class="content">
+                    <p>View the status history and logs for your monitored account(s).</p>
+                    <p>Usage: <code>/accountlogs</code></p>
+                </div>
+                <button class="collapsible">/addaccount</button>
+                <div class="content">
+                    <p>Add a new account to monitor. You'll need to provide your SSO cookie.</p>
+                    <p>Usage: <code>/addaccount</code></p>
+                </div>
+                <button class="collapsible">/captchabalance</button>
+                <div class="content">
+                    <p>Check your remaining EZ-Captcha balance.</p>
+                    <p>Usage: <code>/captchabalance</code></p>
+                </div>
+                <button class="collapsible">/checknow</button>
+                <div class="content">
+                    <p>Perform an immediate status check on your account(s).</p>
+                    <p>Usage: <code>/checknow</code></p>
+                </div>
+                <button class="collapsible">/feedback</button>
+                <div class="content">
+                    <p>Send feedback or suggestions to the bot developers.</p>
+                    <p>Usage: <code>/feedback [your message]</code></p>
+                </div>
+                <button class="collapsible">/helpapi</button>
+                <div class="content">
+                    <p>Get detailed information on setting up and using your EZ-Captcha API key.</p>
+                    <p>Usage: <code>/helpapi</code></p>
+                </div>
+                <button class="collapsible">/helpcookie</button>
+                <div class="content">
+                    <p>Receive a guide on how to obtain your SSO cookie for account monitoring.</p>
+                    <p>Usage: <code>/helpcookie</code></p>
+                </div>
+                <button class="collapsible">/listaccounts</button>
+                <div class="content">
+                    <p>View a list of all your monitored accounts.</p>
+                    <p>Usage: <code>/listaccounts</code></p>
+                </div>
+                <button class="collapsible">/removeaccount</button>
+                <div class="content">
+                    <p>Remove a monitored account from the bot.</p>
+                    <p>Usage: <code>/removeaccount</code></p>
+                </div>
+                <button class="collapsible">/setcaptchaservice</button>
+                <div class="content">
+                    <p>Set your EZ-Captcha API key for faster and more frequent checks.</p>
+                    <p>Usage: <code>/setcaptchaservice</code></p>
+                </div>
+                <button class="collapsible">/setpreference</button>
+                <div class="content">
+                    <p>Set your preferred notification method (channel or direct message).</p>
+                    <p>Usage: <code>/setpreference</code></p>
+                </div>
+                <button class="collapsible">/setcheckinterval</button>
+                <div class="content">
+                    <p>Customize how often the bot checks your account status.</p>
+                    <p>Usage: <code>/setcheckinterval</code></p>
+                </div>
+                <button class="collapsible">/togglecheck</button>
+                <div class="content">
+                    <p>Enable or disable status checks for a specific account.</p>
+                    <p>Usage: <code>/togglecheck</code></p>
+                </div>
+                <button class="collapsible">/updateaccount</button>
+                <div class="content">
+                    <p>Update the SSO cookie for an existing monitored account.</p>
+                    <p>Usage: <code>/updateaccount</code></p>
+                </div>
             </div>
-            <button class="collapsible">/accountlogs</button>
-            <div class="content">
-                <p>View the status history and logs for your monitored account(s).</p>
-                <p>Usage: <code>/accountlogs</code></p>
-            </div>
-            <button class="collapsible">/addaccount</button>
-            <div class="content">
-                <p>Add a new account to monitor. You'll need to provide your SSO cookie.</p>
-                <p>Usage: <code>/addaccount</code></p>
-            </div>
-            <button class="collapsible">/captchabalance</button>
-            <div class="content">
-                <p>Check your remaining EZ-Captcha balance.</p>
-                <p>Usage: <code>/captchabalance</code></p>
-            </div>
-            <button class="collapsible">/checknow</button>
-            <div class="content">
-                <p>Perform an immediate status check on your account(s).</p>
-                <p>Usage: <code>/checknow</code></p>
-            </div>
-            <button class="collapsible">/feedback</button>
-            <div class="content">
-                <p>Send feedback or suggestions to the bot developers.</p>
-                <p>Usage: <code>/feedback [your message]</code></p>
-            </div>
-            <button class="collapsible">/helpapi</button>
-            <div class="content">
-                <p>Get detailed information on setting up and using your EZ-Captcha API key.</p>
-                <p>Usage: <code>/helpapi</code></p>
-            </div>
-            <button class="collapsible">/helpcookie</button>
-            <div class="content">
-                <p>Receive a guide on how to obtain your SSO cookie for account monitoring.</p>
-                <p>Usage: <code>/helpcookie</code></p>
-            </div>
-            <button class="collapsible">/listaccounts</button>
-            <div class="content">
-                <p>View a list of all your monitored accounts.</p>
-                <p>Usage: <code>/listaccounts</code></p>
-            </div>
-            <button class="collapsible">/removeaccount</button>
-            <div class="content">
-                <p>Remove a monitored account from the bot.</p>
-                <p>Usage: <code>/removeaccount</code></p>
-            </div>
-            <button class="collapsible">/setcaptchaservice</button>
-            <div class="content">
-                <p>Set your EZ-Captcha API key for faster and more frequent checks.</p>
-                <p>Usage: <code>/setcaptchaservice</code></p>
-            </div>
-            <button class="collapsible">/setpreference</button>
-            <div class="content">
-                <p>Set your preferred notification method (channel or direct message).</p>
-                <p>Usage: <code>/setpreference</code></p>
-            </div>
-            <button class="collapsible">/setcheckinterval</button>
-            <div class="content">
-                <p>Customize how often the bot checks your account status.</p>
-                <p>Usage: <code>/setcheckinterval</code></p>
-            </div>
-            <button class="collapsible">/togglecheck</button>
-            <div class="content">
-                <p>Enable or disable status checks for a specific account.</p>
-                <p>Usage: <code>/togglecheck</code></p>
-            </div>
-            <button class="collapsible">/updateaccount</button>
-            <div class="content">
-                <p>Update the SSO cookie for an existing monitored account.</p>
-                <p>Usage: <code>/updateaccount</code></p>
-            </div>
-        </div>
-        <div class="help-section">
-            <h2>Obtaining Your SSO Cookie</h2>
-            <p>To add your Call of Duty account to the bot, you'll need to obtain your SSO (Single Sign-On) cookie. Use the <code>/helpcookie</code> command for detailed instructions, or follow these steps:</p>
-            <ol>
-                <li><strong>Login to Your Activision Account:</strong>
-                    <ul>
-                        <li>Go to <a href="https://www.activision.com/" target="_blank" rel="noopener">Activision's website</a> and log in with the account you want to track.</li>
-                    </ul>
-                </li>
-                <li><strong>Access the Developer Console:</strong>
-                    <ul>
-                        <li>Press <code>F12</code> to open the developer console or right-click on the page and select "Inspect".</li>
-                    </ul>
-                </li>
-                <li><strong>Retrieve the SSO Cookie:</strong>
-                    <ul>
-                        <li>In the developer console, switch to the "Console" tab.</li>
-                        <li>Paste the following JavaScript code snippet:</li>
-                    </ul>
-                    <pre><code>var cookieValue = document.cookie.match(/ACT_SSO_COOKIE=([^;]+)/)[1];
+            <div class="help-section">
+                <h2>Obtaining Your SSO Cookie</h2>
+                <p>To add your Call of Duty account to the bot, you'll need to obtain your SSO (Single Sign-On) cookie.
+                    Use
+                    the <code>/helpcookie</code> command for detailed instructions, or follow these steps:</p>
+                <ol>
+                    <li><strong>Login to Your Activision Account:</strong>
+                        <ul>
+                            <li>Go to <a href="https://www.activision.com/" target="_blank" rel="noopener">Activision's
+                                website</a> and log in with the account you want to track.
+                            </li>
+                        </ul>
+                    </li>
+                    <li><strong>Access the Developer Console:</strong>
+                        <ul>
+                            <li>Press <code>F12</code> to open the developer console or right-click on the page and
+                                select
+                                "Inspect".
+                            </li>
+                        </ul>
+                    </li>
+                    <li><strong>Retrieve the SSO Cookie:</strong>
+                        <ul>
+                            <li>In the developer console, switch to the "Console" tab.</li>
+                            <li>Paste the following JavaScript code snippet:</li>
+                        </ul>
+                        <pre><code>var cookieValue = document.cookie.match(/ACT_SSO_COOKIE=([^;]+)/)[1];
 console.log(cookieValue);</code></pre>
-                    <ul>
-                        <li>Accept any warnings related to pasting code.</li>
-                    </ul>
-                </li>
-                <li><strong>Copy the Cookie Value:</strong>
-                    <ul>
-                        <li>After executing the code, you'll see the SSO cookie value. Copy it.</li>
-                    </ul>
-                </li>
-                <li><strong>Add Your Account to the Bot:</strong>
-                    <ul>
-                        <li>Use the <code>/addaccount</code> command to add your account using the copied cookie value.</li>
-                    </ul>
-                </li>
-            </ol>
-            <h3>Additional Methods (Browser-Specific):</h3>
-            <ul>
-                <li><strong>Firefox Users:</strong>
-                    <ol>
-                        <li>Go to the "Storage" tab in the developer console.</li>
-                        <li>Click on "Cookies," then find the "activision.com" domain.</li>
-                        <li>Locate the cookie named "ACT_SSO_COOKIE" and copy its value.</li>
-                    </ol>
-                </li>
-                <li><strong>Chrome Users:</strong>
-                    <ol>
-                        <li>Navigate to the "Application" tab in the developer console.</li>
-                        <li>Click on "Cookies," then find the "activision.com" domain.</li>
-                        <li>Look for the cookie named "ACT_SSO_COOKIE" and copy its value.</li>
-                    </ol>
-                </li>
-                <li><strong>Using Cookie Editor Extension:</strong>
-                    <ol>
-                        <li>Download the <a href="https://cookie-editor.com/" target="_blank" rel="noopener">Cookie Editor extension</a> for your browser.</li>
-                        <li>Log in to Activision.</li>
-                        <li>Use the extension to find and copy the "ACT_SSO_COOKIE" value.</li>
-                    </ol>
-                </li>
-            </ul>
-        </div>
-        <div class="help-section">
-            <h2>Setting Up EZ-Captcha API Key</h2>
-            <p>Using your own EZ-Captcha API key allows for more frequent account checks. Use the <code>/helpapi</code> command for detailed instructions, or follow these steps:</p>
-            <ol>
-                <li>Visit <a href="https://dashboard.ez-captcha.com/#/register?inviteCode=uyNrRgWlEKy" target="_blank" rel="noopener">EZ-Captcha's website</a> to register and obtain an API key.</li>
-                <li>Use the <code>/setcaptchaservice</code> command to set your personal API key.</li>
-                <li>Use the <code>/setcheckinterval</code> command to set your preferred account check frequency (in minutes).</li>
-            </ol>
-            <p><strong>Note:</strong> Using your own API key allows you to control the frequency of checks and manage your usage.</p>
-            <h3>Benefits of Using Your Own API Key:</h3>
-            <ul>
-                <li>Faster and more frequent account checks</li>
-                <li>Control over your usage and costs</li>
-                <li>Ability to customize check intervals to your needs</li>
-                <li>Improved reliability and performance</li>
-            </ul>
-            <h3>Managing Your API Key:</h3>
-            <ul>
-                <li>Use <code>/captchabalance</code> to check your remaining EZ-Captcha balance</li>
-                <li>Regularly monitor your usage to ensure sufficient balance</li>
-                <li>Update your API key if needed using <code>/setcaptchaservice</code></li>
-            </ul>
+                        <ul>
+                            <li>Accept any warnings related to pasting code.</li>
+                        </ul>
+                    </li>
+                    <li><strong>Copy the Cookie Value:</strong>
+                        <ul>
+                            <li>After executing the code, you'll see the SSO cookie value. Copy it.</li>
+                        </ul>
+                    </li>
+                    <li><strong>Add Your Account to the Bot:</strong>
+                        <ul>
+                            <li>Use the <code>/addaccount</code> command to add your account using the copied cookie
+                                value.
+                            </li>
+                        </ul>
+                    </li>
+                </ol>
+                <h3>Additional Methods (Browser-Specific):</h3>
+                <ul>
+                    <li><strong>Firefox Users:</strong>
+                        <ol>
+                            <li>Go to the "Storage" tab in the developer console.</li>
+                            <li>Click on "Cookies," then find the "activision.com" domain.</li>
+                            <li>Locate the cookie named "ACT_SSO_COOKIE" and copy its value.</li>
+                        </ol>
+                    </li>
+                    <li><strong>Chrome Users:</strong>
+                        <ol>
+                            <li>Navigate to the "Application" tab in the developer console.</li>
+                            <li>Click on "Cookies," then find the "activision.com" domain.</li>
+                            <li>Look for the cookie named "ACT_SSO_COOKIE" and copy its value.</li>
+                        </ol>
+                    </li>
+                    <li><strong>Using Cookie Editor Extension:</strong>
+                        <ol>
+                            <li>Download the <a href="https://cookie-editor.com/" target="_blank" rel="noopener">Cookie
+                                Editor extension</a> for your browser.
+                            </li>
+                            <li>Log in to Activision.</li>
+                            <li>Use the extension to find and copy the "ACT_SSO_COOKIE" value.</li>
+                        </ol>
+                    </li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <h2>Setting Up EZ-Captcha API Key</h2>
+                <p>Using your own EZ-Captcha API key allows for more frequent account checks. Use the
+                    <code>/helpapi</code>
+                    command for detailed instructions, or follow these steps:</p>
+                <ol>
+                    <li>Visit <a href="https://dashboard.ez-captcha.com/#/register?inviteCode=uyNrRgWlEKy"
+                                 target="_blank"
+                                 rel="noopener">EZ-Captcha's website</a> to register and obtain an API key.
+                    </li>
+                    <li>Use the <code>/setcaptchaservice</code> command to set your personal API key.</li>
+                    <li>Use the <code>/setcheckinterval</code> command to set your preferred account check frequency (in
+                        minutes).
+                    </li>
+                </ol>
+                <p><strong>Note:</strong> Using your own API key allows you to control the frequency of checks and
+                    manage
+                    your usage.</p>
+                <h3>Benefits of Using Your Own API Key:</h3>
+                <ul>
+                    <li>Faster and more frequent account checks</li>
+                    <li>Control over your usage and costs</li>
+                    <li>Ability to customize check intervals to your needs</li>
+                    <li>Improved reliability and performance</li>
+                </ul>
+                <h3>Managing Your API Key:</h3>
+                <ul>
+                    <li>Use <code>/captchabalance</code> to check your remaining EZ-Captcha balance</li>
+                    <li>Regularly monitor your usage to ensure sufficient balance</li>
+                    <li>Update your API key if needed using <code>/setcaptchaservice</code></li>
+                </ul>
+            </div>
         </div>
     </div>
 </div>
-    <footer>
-        <div class="container">
+<footer>
+    <div class="container">
         <p>© 2024 COD Status Bot. All rights reserved.</p>
-        <p>
-            <a href="https://GitHub.com/bradselph/codstatusbot" target="_blank" rel="noopener">GitHub</a> |
+        <div class="footer-links">
+            <a href="https://github.com/bradselph/codstatusbot" target="_blank" rel="noopener">GitHub</a> |
             <a href="/admin/stats">Admin Stats</a> |
-            <a href="/">Home</a>
-        </p>
+            <a href="/">Home</a> |
+            <a href="/help">Help Center</a> |
+            <a href="mailto:dev@codstatusbot.us">Contact Us</a> |
+            <a href="/policy">Privacy Policy</a> |
+            <a href="/terms">Terms of Service</a>
         </div>
-    </footer>
+    </div>
     <script>
         let coll = document.getElementsByClassName("collapsible");
         let i;
         for (i = 0; i < coll.length; i++) {
-            coll[i].addEventListener("click", function() {
+            coll[i].addEventListener("click", function () {
                 this.classList.toggle("active");
                 let content = this.nextElementSibling;
-                if (content.style.maxHeight){
+                if (content.style.maxHeight) {
                     content.style.maxHeight = null;
                 } else {
                     content.style.maxHeight = content.scrollHeight + "px";
@@ -338,5 +254,16 @@ console.log(cookieValue);</code></pre>
             });
         }
     </script>
+    <script>
+        function setHeaderHeight() {
+            const header = document.querySelector('header');
+            const height = header.offsetHeight;
+            document.documentElement.style.setProperty('--header-height', `${height}px`);
+        }
+
+        window.addEventListener('load', setHeaderHeight);
+        window.addEventListener('resize', setHeaderHeight);
+    </script>
+</footer>
 </body>
 </html>

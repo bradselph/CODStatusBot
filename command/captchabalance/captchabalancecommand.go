@@ -1,9 +1,10 @@
 package captchabalance
 
 import (
-	"CODStatusBot/logger"
-	"CODStatusBot/services"
 	"fmt"
+
+	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/services"
 	"github.com/bwmarrin/discordgo"
 )
 

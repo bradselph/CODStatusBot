@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"CODStatusBot/database"
-	"CODStatusBot/logger"
-	"CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/database"
+	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/models"
 
 	"github.com/bwmarrin/discordgo"
 )

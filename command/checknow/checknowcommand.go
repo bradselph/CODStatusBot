@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"CODStatusBot/database"
-	"CODStatusBot/logger"
-	"CODStatusBot/models"
-	"CODStatusBot/services"
+	"github.com/bradselph/CODStatusBot/database"
+	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/services"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -26,8 +26,8 @@ func init() {
 	rateLimitStr := os.Getenv("CHECK_NOW_RATE_LIMIT")
 	rateLimitSeconds, err := strconv.Atoi(rateLimitStr)
 	if err != nil {
-		logger.Log.WithError(err).Error("Failed to parse CHECK_NOW_RATE_LIMIT, using default of 60 seconds")
-		rateLimitSeconds = 60
+		logger.Log.WithError(err).Error("Failed to parse CHECK_NOW_RATE_LIMIT, using default of 3600 seconds")
+		rateLimitSeconds = 3600
 	}
 	rateLimit = time.Duration(rateLimitSeconds) * time.Second
 }
@@ -47,25 +47,29 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	logger.Log.Infof("User %s initiated a check. API Key set: %v", userID, userSettings.CaptchaAPIKey != "")
-
-	if userSettings.CaptchaAPIKey == "" {
+	if userSettings.EZCaptchaAPIKey == "" && userSettings.TwoCaptchaAPIKey == "" {
 		if !checkRateLimit(userID) {
-			respondToInteraction(s, i, fmt.Sprintf("You're using this command too frequently. Please wait %v before trying again, or set up your own API key for unlimited use.", rateLimit))
+			respondToInteraction(s, i, fmt.Sprintf("You're using the bot's default API key and are rate limited. Please wait %v before trying again, or set up your own API key using /setcaptchaservice for unlimited checks.", rateLimit))
 			return
 		}
 	}
 
-	var accountTitle string
-	if len(i.ApplicationCommandData().Options) > 0 {
-		accountTitle = i.ApplicationCommandData().Options[0].StringValue()
+	if userSettings.EZCaptchaAPIKey != "" || userSettings.TwoCaptchaAPIKey != "" {
+		_, balance, err := services.GetUserCaptchaKey(userID)
+		if err != nil {
+			logger.Log.WithError(err).Error("Error getting captcha key")
+			respondToInteraction(s, i, "Error validating your captcha API key. Please check your key using /setcaptchaservice.")
+			return
+		}
+
+		if balance < 0 {
+			respondToInteraction(s, i, fmt.Sprintf("Your captcha balance (%.2f) is too low for checking accounts. Please recharge your balance.", balance))
+			return
+		}
 	}
 
 	var accounts []models.Account
 	query := database.DB.Where("user_id = ?", userID)
-	if accountTitle != "" {
-		query = query.Where("title = ?", accountTitle)
-	}
 	result := query.Find(&accounts)
 
 	if result.Error != nil {
@@ -79,13 +83,7 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	if len(accounts) == 1 || accountTitle != "" {
-		// If only one account, or a specific account was requested, check it immediately.
-		checkAccounts(s, i, accounts)
-	} else {
-		// If multiple accounts and no specific account was requested, show buttons.
-		showAccountButtons(s, i, accounts)
-	}
+	showAccountButtons(s, i, accounts)
 }
 
 func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, accounts []models.Account) {
@@ -112,15 +110,17 @@ func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, ac
 		}
 	}
 
-	// Check All button
-	currentRow = append(currentRow, discordgo.Button{
-		Label:    "Check All",
-		Style:    discordgo.SuccessButton,
-		CustomID: fmt.Sprintf("check_now_%s_all", userID),
-	})
+	if len(currentRow) < 5 {
+		currentRow = append(currentRow, discordgo.Button{
+			Label:    "Check All",
+			Style:    discordgo.SuccessButton,
+			CustomID: fmt.Sprintf("check_now_%s_all", userID),
+		})
+	}
 
-	// last row (will always have 5 or fewer components)
-	components = append(components, discordgo.ActionsRow{Components: currentRow})
+	if len(currentRow) > 0 {
+		components = append(components, discordgo.ActionsRow{Components: currentRow})
+	}
 
 	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -148,34 +148,55 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 	userID := parts[2]
 	accountIDOrAll := parts[3]
 
+	userSettings, err := services.GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Error("Error fetching user settings")
+		respondToInteraction(s, i, "Error fetching settings. Please try again.")
+		return
+	}
+
+	if userSettings.EZCaptchaAPIKey != "" || userSettings.TwoCaptchaAPIKey != "" {
+		apiKey, balance, err := services.GetUserCaptchaKey(userID)
+		if err != nil || apiKey == "" {
+			logger.Log.WithError(err).Error("Error getting captcha key")
+			respondToInteraction(s, i, "Error validating your captcha API key. Please check your key using /setcaptchaservice.")
+			return
+		}
+
+		if balance < 0 {
+			respondToInteraction(s, i, fmt.Sprintf("Your captcha balance (%.2f) is too low for checking accounts. Please recharge your balance.", balance))
+			return
+		}
+	}
+
+	var accounts []models.Account
 	if accountIDOrAll == "all" {
-		var accounts []models.Account
 		result := database.DB.Where("user_id = ?", userID).Find(&accounts)
 		if result.Error != nil {
 			logger.Log.WithError(result.Error).Error("Error fetching accounts")
 			respondToInteraction(s, i, "Error fetching accounts. Please try again later.")
 			return
 		}
-		checkAccounts(s, i, accounts)
-		return
+	} else {
+		accountID, err := strconv.Atoi(accountIDOrAll)
+		if err != nil {
+			logger.Log.WithError(err).Error("Error parsing account ID")
+			respondToInteraction(s, i, "Error processing your selection. Please try again.")
+			return
+		}
+
+		var account models.Account
+		result := database.DB.First(&account, accountID)
+		if result.Error != nil {
+			logger.Log.WithError(result.Error).Error("Error fetching account")
+			respondToInteraction(s, i, "Error: Account not found or you don't have permission to check it.")
+			return
+		}
+
+		accounts = append(accounts, account)
 	}
 
-	accountID, err := strconv.Atoi(accountIDOrAll)
-	if err != nil {
-		logger.Log.WithError(err).Error("Error parsing account ID")
-		respondToInteraction(s, i, "Error processing your selection. Please try again.")
-		return
-	}
-
-	var account models.Account
-	result := database.DB.First(&account, accountID)
-	if result.Error != nil {
-		logger.Log.WithError(result.Error).Error("Error fetching account")
-		respondToInteraction(s, i, "Error: Account not found or you don't have permission to check it.")
-		return
-	}
-
-	checkAccounts(s, i, []models.Account{account})
+	checkAccounts(s, i, accounts)
 }
 
 func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, accounts []models.Account) {
@@ -193,13 +214,23 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 	var embeds []*discordgo.MessageEmbed
 
 	for _, account := range accounts {
-		logger.Log.Infof("Checking account %s for user %s", account.Title, account.UserID)
+		if account.IsCheckDisabled {
+			embed := &discordgo.MessageEmbed{
+				Title:       fmt.Sprintf("%s - Checks Disabled", account.Title),
+				Description: fmt.Sprintf("Checks are disabled for this account. Reason: %s", account.DisabledReason),
+				Color:       services.GetColorForStatus(account.LastStatus, account.IsExpiredCookie, true),
+				Timestamp:   time.Now().Format(time.RFC3339),
+			}
+			embeds = append(embeds, embed)
+			continue
+		}
 
 		if account.IsExpiredCookie {
 			embed := &discordgo.MessageEmbed{
 				Title:       fmt.Sprintf("%s - Expired Cookie", account.Title),
 				Description: "The SSO cookie for this account has expired. Please update it using the /updateaccount command.",
-				Color:       0xFF0000, // Red color for expired cookie
+				Color:       services.GetColorForStatus(models.StatusUnknown, true, false),
+				Timestamp:   time.Now().Format(time.RFC3339),
 			}
 			embeds = append(embeds, embed)
 			continue
@@ -207,19 +238,21 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 
 		status, err := services.CheckAccount(account.SSOCookie, account.UserID, "")
 		if err != nil {
-			logger.Log.WithError(err).Errorf("Error checking account status for %s: %v", account.Title, err)
-
-			errorDescription := "An error occurred while checking this account's status. "
-			if strings.Contains(err.Error(), "captcha") {
-				errorDescription += "There may be an issue with the captcha service. Please try again in a few minutes or contact support if the problem persists."
+			logger.Log.WithError(err).Errorf("Error checking account %s", account.Title)
+			description := "An error occurred while checking this account. "
+			if strings.Contains(err.Error(), "insufficient balance") {
+				description += "Your captcha balance is too low. Please recharge your balance."
+			} else if strings.Contains(err.Error(), "invalid captcha") {
+				description += "There was an issue with your captcha API key. Please verify it using /setcaptchaservice."
 			} else {
-				errorDescription += "Please try again later. If the problem continues, consider updating your account's SSO cookie."
+				description += "Please try again later."
 			}
 
 			embed := &discordgo.MessageEmbed{
 				Title:       fmt.Sprintf("%s - Error", account.Title),
-				Description: errorDescription,
-				Color:       0xFF0000, // Red color for error
+				Description: description,
+				Color:       0xFF0000,
+				Timestamp:   time.Now().Format(time.RFC3339),
 			}
 			embeds = append(embeds, embed)
 			continue
@@ -229,32 +262,30 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 		account.LastCheck = time.Now().Unix()
 		if err := database.DB.Save(&account).Error; err != nil {
 			logger.Log.WithError(err).Errorf("Failed to update account %s after check", account.Title)
-		} else {
-			logger.Log.Infof("Updated LastCheck for account %s to %v", account.Title, account.LastCheck)
 		}
 
 		embed := &discordgo.MessageEmbed{
-			Title:       fmt.Sprintf("%s - %s", account.Title, status),
+			Title:       fmt.Sprintf("%s - Status Check", account.Title),
 			Description: fmt.Sprintf("Current status: %s", status),
 			Color:       services.GetColorForStatus(status, account.IsExpiredCookie, account.IsCheckDisabled),
-			Timestamp:   time.Now().Format(time.RFC3339),
 			Fields: []*discordgo.MessageEmbedField{
 				{
 					Name:   "Last Checked",
-					Value:  time.Unix(account.LastCheck, 0).Format(time.RFC1123),
+					Value:  time.Now().Format(time.RFC1123),
 					Inline: true,
 				},
 			},
+			Timestamp: time.Now().Format(time.RFC3339),
 		}
 		embeds = append(embeds, embed)
 	}
 
-	// Send embeds in batches of 10 (Discord's limit)
 	for j := 0; j < len(embeds); j += 10 {
 		end := j + 10
 		if end > len(embeds) {
 			end = len(embeds)
 		}
+
 		_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Embeds: embeds[j:end],
 			Flags:  discordgo.MessageFlagsEphemeral,
@@ -277,31 +308,6 @@ func checkRateLimit(userID string) bool {
 	return false
 }
 
-func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	var err error
-	if i.Type == discordgo.InteractionMessageComponent {
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: &discordgo.InteractionResponseData{
-				Content:    content,
-				Components: []discordgo.MessageComponent{},
-				Flags:      discordgo.MessageFlagsEphemeral,
-			},
-		})
-	} else {
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: content,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
-	}
-	if err != nil {
-		logger.Log.WithError(err).Error("Error responding to interaction")
-	}
-}
-
 func getUserID(i *discordgo.InteractionCreate) (string, error) {
 	if i.Member != nil && i.Member.User != nil {
 		return i.Member.User.ID, nil
@@ -310,4 +316,17 @@ func getUserID(i *discordgo.InteractionCreate) (string, error) {
 		return i.User.ID, nil
 	}
 	return "", fmt.Errorf("unable to determine user ID")
+}
+
+func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: message,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+	if err != nil {
+		logger.Log.WithError(err).Error("Error responding to interaction")
+	}
 }

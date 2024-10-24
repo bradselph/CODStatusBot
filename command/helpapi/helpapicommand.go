@@ -1,7 +1,7 @@
 package helpapi
 
 import (
-	"CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/logger"
 
 	"github.com/bwmarrin/discordgo"
 )
