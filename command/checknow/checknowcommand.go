@@ -363,84 +363,89 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 		return
 	}
 
-	var embeds []*discordgo.MessageEmbed
+	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		Content: fmt.Sprintf("Starting check of %d accounts...", len(accounts)),
+		Flags:   discordgo.MessageFlagsEphemeral,
+	})
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to send initial status message")
+	}
 
+	processedCount := 0
 	for _, account := range accounts {
+		var embed *discordgo.MessageEmbed
+
 		if account.IsCheckDisabled {
-			embed := &discordgo.MessageEmbed{
+			embed = &discordgo.MessageEmbed{
 				Title:       fmt.Sprintf("%s - Checks Disabled", account.Title),
 				Description: fmt.Sprintf("Checks are disabled for this account. Reason: %s", account.DisabledReason),
 				Color:       services.GetColorForStatus(account.LastStatus, account.IsExpiredCookie, true),
 				Timestamp:   time.Now().Format(time.RFC3339),
 			}
-			embeds = append(embeds, embed)
-			continue
-		}
-
-		if account.IsExpiredCookie {
-			embed := &discordgo.MessageEmbed{
+		} else if account.IsExpiredCookie {
+			embed = &discordgo.MessageEmbed{
 				Title:       fmt.Sprintf("%s - Expired Cookie", account.Title),
 				Description: "The SSO cookie for this account has expired. Please update it using the /updateaccount command.",
 				Color:       services.GetColorForStatus(models.StatusUnknown, true, false),
 				Timestamp:   time.Now().Format(time.RFC3339),
 			}
-			embeds = append(embeds, embed)
-			continue
-		}
+		} else {
+			status, err := services.CheckAccount(account.SSOCookie, account.UserID, "")
+			if err != nil {
+				logger.Log.WithError(err).Errorf("Error checking account %s", account.Title)
+				description := "An error occurred while checking this account. "
+				if strings.Contains(err.Error(), "insufficient balance") {
+					description += "Your captcha balance is too low. Please recharge your balance."
+				} else if strings.Contains(err.Error(), "invalid captcha") {
+					description += "There was an issue with your captcha API key. Please verify it using /setcaptchaservice."
+				} else {
+					description += "Please try again later."
+				}
 
-		status, err := services.CheckAccount(account.SSOCookie, account.UserID, "")
-		if err != nil {
-			logger.Log.WithError(err).Errorf("Error checking account %s", account.Title)
-			description := "An error occurred while checking this account. "
-			if strings.Contains(err.Error(), "insufficient balance") {
-				description += "Your captcha balance is too low. Please recharge your balance."
-			} else if strings.Contains(err.Error(), "invalid captcha") {
-				description += "There was an issue with your captcha API key. Please verify it using /setcaptchaservice."
+				embed = &discordgo.MessageEmbed{
+					Title:       fmt.Sprintf("%s - Error", account.Title),
+					Description: description,
+					Color:       0xFF0000,
+					Timestamp:   time.Now().Format(time.RFC3339),
+				}
 			} else {
-				description += "Please try again later."
+				services.HandleStatusChange(s, account, status, userSettings)
+
+				embed = &discordgo.MessageEmbed{
+					Title:       fmt.Sprintf("%s - Status Check", account.Title),
+					Description: fmt.Sprintf("Current status: %s", status),
+					Color:       services.GetColorForStatus(status, account.IsExpiredCookie, account.IsCheckDisabled),
+					Fields: []*discordgo.MessageEmbedField{
+						{
+							Name:   "Last Checked",
+							Value:  time.Now().Format(time.RFC1123),
+							Inline: true,
+						},
+					},
+					Timestamp: time.Now().Format(time.RFC3339),
+				}
 			}
-
-			embed := &discordgo.MessageEmbed{
-				Title:       fmt.Sprintf("%s - Error", account.Title),
-				Description: description,
-				Color:       0xFF0000,
-				Timestamp:   time.Now().Format(time.RFC3339),
-			}
-			embeds = append(embeds, embed)
-			continue
-		}
-
-		services.HandleStatusChange(s, account, status, userSettings)
-
-		embed := &discordgo.MessageEmbed{
-			Title:       fmt.Sprintf("%s - Status Check", account.Title),
-			Description: fmt.Sprintf("Current status: %s", status),
-			Color:       services.GetColorForStatus(status, account.IsExpiredCookie, account.IsCheckDisabled),
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name:   "Last Checked",
-					Value:  time.Now().Format(time.RFC1123),
-					Inline: true,
-				},
-			},
-			Timestamp: time.Now().Format(time.RFC3339),
-		}
-		embeds = append(embeds, embed)
-	}
-
-	for j := 0; j < len(embeds); j += 10 {
-		end := j + 10
-		if end > len(embeds) {
-			end = len(embeds)
 		}
 
 		_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Embeds: embeds[j:end],
+			Embeds: []*discordgo.MessageEmbed{embed},
 			Flags:  discordgo.MessageFlagsEphemeral,
 		})
 		if err != nil {
 			logger.Log.WithError(err).Error("Failed to send follow-up message")
 		}
+
+		processedCount++
+		time.Sleep(time.Second)
+	}
+
+	completionMessage := fmt.Sprintf("Completed checking all %d accounts.", processedCount)
+	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+		Content: completionMessage,
+		Flags:   discordgo.MessageFlagsEphemeral,
+	})
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to send completion message")
 	}
 }
 

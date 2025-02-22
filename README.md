@@ -1,6 +1,7 @@
 # COD Status Bot
 
 [![Go](https://github.com/bradselph/CODStatusBot/actions/workflows/go.yml/badge.svg)](https://github.com/bradselph/CODStatusBot/actions/workflows/go.yml)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fbradselph%2FCODStatusBot.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fbradselph%2FCODStatusBot?ref=badge_shield)
 
 ## Introduction
 
@@ -236,6 +237,9 @@ This project is licensed under the GNU Affero General Public License v3.0 (AGPL-
 
 For more details, see the [LICENSE](LICENSE) file in the repository or
 visit [GNU AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html).
+
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fbradselph%2FCODStatusBot.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fbradselph%2FCODStatusBot?ref=badge_large)
 
 ## Open Source
 

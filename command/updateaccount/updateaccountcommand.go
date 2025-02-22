@@ -294,6 +294,19 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	services.DBMutex.Unlock()
 
+	statusLog := models.Ban{
+		AccountID: account.ID,
+		Status:    account.LastStatus,
+		LogType:   "cookie_update",
+		Message:   "SSO Cookie updated",
+		Timestamp: time.Now(),
+		Initiator: "user",
+	}
+
+	if err := database.DB.Create(&statusLog).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to log cookie update")
+	}
+
 	oldVIP, _ := services.CheckVIPStatus(account.SSOCookie)
 	newVIP, _ := services.CheckVIPStatus(newSSOCookie)
 

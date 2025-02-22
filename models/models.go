@@ -38,8 +38,7 @@ type Account struct {
 
 type UserSettings struct {
 	gorm.Model
-	UserID string `gorm:"type:varchar(255);uniqueIndex"` // The ID of the user.
-	//	UserID                       string               `gorm:"uniqueIndex"` // The ID of the user.
+	UserID                       string               `gorm:"type:varchar(255);uniqueIndex"` // The ID of the user.
 	CapSolverAPIKey              string               // User's own Capsolver API key, if provided
 	EZCaptchaAPIKey              string               // User's own EZCaptcha API key, if provided
 	TwoCaptchaAPIKey             string               // User's own 2captcha API key, if provided
@@ -72,11 +71,14 @@ type Ban struct {
 	Account         Account   // The account that has a status history.
 	AccountID       uint      // The ID of the account.
 	Status          Status    // The status of the ban.
-	LogType         string    // Type of log entry ("account_added", "status_change", etc.)
+	LogType         string    // Type of log entry ("status_change", "account_added", "cookie_update", "check_disabled", "error")
 	Message         string    // Detailed message about the log entry
+	PreviousStatus  Status    // Store the previous status for better tracking
 	TempBanDuration string    // Duration of the temporary ban (if applicable)
 	AffectedGames   string    // Comma-separated list of affected games
 	Timestamp       time.Time // When this log entry was created
+	Initiator       string    // "auto_check" or "manual_check" or "system"
+	ErrorDetails    string    // For storing error information when relevant
 }
 type SuppressedNotification struct {
 	gorm.Model

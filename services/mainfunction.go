@@ -90,16 +90,16 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 		}
 
 		statusLog := models.Ban{
-			AccountID: account.ID,
-			Status:    newStatus,
-			LogType:   "status_change",
-			Message:   fmt.Sprintf("Status changed from %s to %s", previousStatus, newStatus),
-			Timestamp: now,
+			AccountID:      account.ID,
+			Status:         newStatus,
+			PreviousStatus: previousStatus,
+			LogType:        "status_change",
+			Message:        fmt.Sprintf("Status changed from %s to %s", previousStatus, newStatus),
+			Timestamp:      now,
+			Initiator:      "auto_check",
 		}
 
-		if newStatus == models.StatusPermaban ||
-			newStatus == models.StatusTempban ||
-			newStatus == models.StatusShadowban {
+		if newStatus == models.StatusPermaban || newStatus == models.StatusTempban || newStatus == models.StatusShadowban {
 			statusLog.AffectedGames = getAffectedGames(account.SSOCookie)
 		}
 
@@ -108,7 +108,7 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 		}
 
 		if err := database.DB.Create(&statusLog).Error; err != nil {
-			logger.Log.WithError(err).Error("Failed to create status change log")
+			logger.Log.WithError(err).Error("Failed to create status log")
 		}
 
 		ban := models.Ban{

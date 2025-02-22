@@ -112,10 +112,12 @@ func GetCooldownDuration(userSettings models.UserSettings, notificationType stri
 	}
 }
 
+/*
 func IsDonationsEnabled() bool {
 	cfg := configuration.Get()
 	return cfg.Donations.Enabled
 }
+*/
 
 func GetNotificationChannel(s *discordgo.Session, account models.Account, userSettings models.UserSettings) (string, error) {
 	if userSettings.NotificationType == "dm" {
@@ -200,18 +202,7 @@ func CheckAndNotifyBalance(s *discordgo.Session, userID string, balance float64)
 		}
 	}
 
-	var threshold float64
-	switch userSettings.PreferredCaptchaProvider {
-	case "capsolver":
-		threshold = cfg.CaptchaService.Capsolver.BalanceMin
-	case "ezcaptcha":
-		threshold = cfg.CaptchaService.EZCaptcha.BalanceMin
-	case "2captcha":
-		threshold = cfg.CaptchaService.TwoCaptcha.BalanceMin
-	default:
-		logger.Log.Warnf("Unknown captcha provider: %s", userSettings.PreferredCaptchaProvider)
-		return
-	}
+	threshold := getBalanceThreshold(userSettings.PreferredCaptchaProvider)
 
 	if balance < threshold {
 		embed := &discordgo.MessageEmbed{
@@ -769,21 +760,6 @@ func SendConsolidatedDailyUpdate(s *discordgo.Session, userID string, userSettin
 	}
 
 	checkAccountsNeedingAttention(s, accounts, userSettings)
-}
-
-func isCriticalError(err error) bool {
-	criticalErrors := []string{
-		"invalid captcha API key",
-		"insufficient balance",
-		"bot removed from server/channel",
-	}
-
-	for _, criticalErr := range criticalErrors {
-		if strings.Contains(err.Error(), criticalErr) {
-			return true
-		}
-	}
-	return false
 }
 
 func GetStatusIcon(status models.Status) string {

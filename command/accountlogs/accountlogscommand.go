@@ -39,7 +39,6 @@ func CommandAccountLogs(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	var (
-		// Create buttons for each account
 		components []discordgo.MessageComponent
 		currentRow []discordgo.MessageComponent
 	)
@@ -57,7 +56,6 @@ func CommandAccountLogs(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 	}
 
-	// Create View All Logs button
 	if len(currentRow) < 5 {
 		currentRow = append(currentRow, discordgo.Button{
 			Label:    "View All Logs",
@@ -75,7 +73,6 @@ func CommandAccountLogs(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 	}
 
-	// Add the last row
 	components = append(components, discordgo.ActionsRow{Components: currentRow})
 
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -155,7 +152,6 @@ func handleAllAccountLogs(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		embeds = append(embeds, embed)
 	}
 
-	// Send embeds in batches of 10 (Discord's limit)
 	for j := 0; j < len(embeds); j += 10 {
 		end := j + 10
 		if end > len(embeds) {
@@ -219,16 +215,22 @@ func createAccountLogEmbed(account models.Account) *discordgo.MessageEmbed {
 		case "account_added":
 			fieldValue.WriteString("Account added to monitoring\n")
 		case "status_change":
-			fieldValue.WriteString(fmt.Sprintf("%s\n", log.Message))
-
-			if log.Status != models.StatusGood && log.Status != models.StatusUnknown {
-				if log.AffectedGames != "" {
-					fieldValue.WriteString(fmt.Sprintf("Affected Games: %s\n", log.AffectedGames))
-				}
-				if log.TempBanDuration != "" {
-					fieldValue.WriteString(fmt.Sprintf("Duration: %s\n", log.TempBanDuration))
-				}
+			fieldValue.WriteString(fmt.Sprintf("%s -> %s\n", log.PreviousStatus, log.Status))
+			if log.Message != "" {
+				fieldValue.WriteString(fmt.Sprintf("%s\n", log.Message))
 			}
+			if log.AffectedGames != "" {
+				fieldValue.WriteString(fmt.Sprintf("Affected Games: %s\n", log.AffectedGames))
+			}
+			if log.TempBanDuration != "" {
+				fieldValue.WriteString(fmt.Sprintf("Duration: %s\n", log.TempBanDuration))
+			}
+		case "check_status":
+			fieldValue.WriteString(log.Message + "\n")
+		case "cookie_update":
+			fieldValue.WriteString("SSO Cookie updated\n")
+		case "error":
+			fieldValue.WriteString(fmt.Sprintf("Error: %s\n", log.ErrorDetails))
 		}
 
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
@@ -236,10 +238,6 @@ func createAccountLogEmbed(account models.Account) *discordgo.MessageEmbed {
 			Value:  fieldValue.String(),
 			Inline: false,
 		})
-	}
-
-	embed.Footer = &discordgo.MessageEmbedFooter{
-		Text: "Use /checknow to perform an immediate status check",
 	}
 
 	return embed

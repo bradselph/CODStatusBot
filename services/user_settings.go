@@ -32,14 +32,6 @@ func initDefaultSettings() {
 	} else if cfg.CaptchaService.TwoCaptcha.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "2captcha"
 	}
-	/*
-		logger.Log.Infof("Default settings initialized: CheckInterval=%d, NotificationInterval=%.2f, CooldownDuration=%.2f, StatusChangeCooldown=%.2f, Provider=%s",
-			defaultSettings.CheckInterval,
-			defaultSettings.NotificationInterval,
-			defaultSettings.CooldownDuration,
-			defaultSettings.StatusChangeCooldown,
-			defaultSettings.PreferredCaptchaProvider)
-	*/
 }
 
 func GetUserSettings(userID string) (models.UserSettings, error) {
@@ -161,18 +153,6 @@ func GetUserCaptchaKey(userID string) (string, float64, error) {
 				settings.PreferredCaptchaProvider = "capsolver"
 				if err := database.DB.Save(&settings).Error; err != nil {
 					logger.Log.WithError(err).Error("Failed to update preferred provider")
-					/*					}
-										// Fall through to use default Capsolver key
-										defaultKey := cfg.CaptchaService.Capsolver.ClientKey
-										isValid, balance, err := ValidateCaptchaKey(defaultKey, "capsolver")
-										if err != nil {
-											return "", 0, err
-										}
-										if !isValid {
-											return "", 0, fmt.Errorf("invalid default capsolver API key")
-										}
-										return defaultKey, balance, nil
-					*/
 				}
 				return GetUserCaptchaKey(userID)
 			}
@@ -191,23 +171,10 @@ func GetUserCaptchaKey(userID string) (string, float64, error) {
 
 	case "2captcha":
 		if !cfg.CaptchaService.TwoCaptcha.Enabled {
-			// If 2Captcha is disabled, try to transition to Capsolver
 			if cfg.CaptchaService.Capsolver.Enabled {
 				settings.PreferredCaptchaProvider = "capsolver"
 				if err := database.DB.Save(&settings).Error; err != nil {
 					logger.Log.WithError(err).Error("Failed to update preferred provider")
-					/*					}
-										// Fall through to use default Capsolver key
-										defaultKey := cfg.CaptchaService.Capsolver.ClientKey
-										isValid, balance, err := ValidateCaptchaKey(defaultKey, "capsolver")
-										if err != nil {
-											return "", 0, err
-										}
-										if !isValid {
-											return "", 0, fmt.Errorf("invalid default capsolver API key")
-										}
-										return defaultKey, balance, nil
-					*/
 				}
 				return GetUserCaptchaKey(userID)
 			}

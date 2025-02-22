@@ -24,9 +24,6 @@ const (
 	TwoCaptchaResultEndpoint = "https://api.2captcha.com/getTaskResult"
 	MaxRetries               = 6
 	RetryInterval            = 10 * time.Second
-	//	capsol                   = "capsolver"
-	//	ezcap                    = "ezcaptcha"
-	//	twocap                   = "2captcha"
 )
 
 type CaptchaSolver interface {
@@ -423,7 +420,6 @@ func sendRequest(url string, payload interface{}) ([]byte, error) {
 	return body, nil
 }
 
-// TODO check why this is not in use
 func getBalanceThreshold(provider string) float64 {
 	cfg := configuration.Get()
 	switch provider {

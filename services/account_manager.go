@@ -2,7 +2,6 @@ package services
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/bradselph/CODStatusBot/configuration"
@@ -20,7 +19,6 @@ func validateRateLimit(userID, action string, duration time.Duration) bool {
 	}
 
 	userSettings.EnsureMapsInitialized()
-
 	now := time.Now()
 	lastAction := userSettings.LastCommandTimes[action]
 
@@ -41,12 +39,6 @@ func validateRateLimit(userID, action string, duration time.Duration) bool {
 	}
 
 	return true
-}
-
-func isChannelError(err error) bool {
-	return strings.Contains(err.Error(), "Missing Access") ||
-		strings.Contains(err.Error(), "Unknown Channel") ||
-		strings.Contains(err.Error(), "Missing Permissions")
 }
 
 func checkActionRateLimit(userID, action string, duration time.Duration) bool {
@@ -70,13 +62,15 @@ func checkActionRateLimit(userID, action string, duration time.Duration) bool {
 		return false
 	}
 
+	tx := database.DB.Begin()
 	userSettings.LastActionTimes[action] = now
 	userSettings.ActionCounts[action] = count + 1
-
-	if err := database.DB.Save(&userSettings).Error; err != nil {
+	if err := tx.Save(&userSettings).Error; err != nil {
+		tx.Rollback()
 		logger.Log.WithError(err).Error("Error saving user settings")
 		return false
 	}
+	tx.Commit()
 
 	return true
 }
@@ -84,18 +78,20 @@ func checkActionRateLimit(userID, action string, duration time.Duration) bool {
 func getActionLimit(action string) int {
 	switch action {
 	case "check_account":
-		return 5
+		return 25
 	case "notification":
-		return 10
+		return 30
 	default:
-		return 3
+		return 10
 	}
 }
 
 func processUserAccounts(s *discordgo.Session, userID string, accounts []models.Account) {
-	cfg := configuration.Get()
+	if len(accounts) == 0 {
+		return
+	}
 
-	now := time.Now()
+	cfg := configuration.Get()
 	userSettings, err := GetUserSettings(userID)
 	if err != nil {
 		logger.Log.WithError(err).Errorf("Failed to get user settings for user %s", userID)
@@ -108,16 +104,14 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 		return
 	}
 
-	var accountsToUpdate []models.Account
-	var accountsToNotify []models.Account
-	var accountsForDailyUpdate []models.Account
-
 	notificationInterval := time.Duration(userSettings.NotificationInterval) * time.Hour
 	if notificationInterval == 0 {
 		notificationInterval = time.Duration(cfg.Intervals.Notification) * time.Hour
 	}
 
 	shouldSendDaily := time.Since(userSettings.LastDailyUpdateNotification) >= notificationInterval
+
+	var accountsToUpdate, accountsToNotify, accountsForDailyUpdate []models.Account
 
 	for _, account := range accounts {
 		if !account.IsCheckDisabled && !account.IsExpiredCookie {
@@ -139,6 +133,7 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 			continue
 		}
 
+		now := time.Now()
 		account.LastCheck = now.Unix()
 		account.LastSuccessfulCheck = now
 		account.ConsecutiveErrors = 0
@@ -150,7 +145,6 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 		}
 
 		accountsToUpdate = append(accountsToUpdate, account)
-		accountsForDailyUpdate = append(accountsForDailyUpdate, account)
 	}
 
 	if len(accountsToUpdate) > 0 {
@@ -183,10 +177,9 @@ func notifyUserOfServiceIssue(s *discordgo.Session, userID string, err error) {
 	}
 
 	embed := &discordgo.MessageEmbed{
-		Title: "Service Issue Detected",
-		Description: fmt.Sprintf("A service issue has been detected: %v\n"+
-			"User ID: %s", err, userID),
-		Color: 0xFF0000,
+		Title:       "Service Issue Detected",
+		Description: fmt.Sprintf("A service issue has been detected: %v\nUser ID: %s", err, userID),
+		Color:       0xFF0000,
 		Fields: []*discordgo.MessageEmbedField{
 			{
 				Name:   "Issue Type",
@@ -202,8 +195,7 @@ func notifyUserOfServiceIssue(s *discordgo.Session, userID string, err error) {
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
-	_, err = s.ChannelMessageSendEmbed(channel.ID, embed)
-	if err != nil {
+	if _, err = s.ChannelMessageSendEmbed(channel.ID, embed); err != nil {
 		logger.Log.WithError(err).Error("Failed to send admin service issue notification")
 	}
 }
@@ -232,11 +224,10 @@ func shouldCheckAccount(account models.Account, settings models.UserSettings) bo
 
 	lastCheckTime := time.Unix(account.LastCheck, 0)
 	checkInterval := time.Duration(settings.CheckInterval) * time.Minute
+	hasCustomKey := settings.CapSolverAPIKey != "" || settings.EZCaptchaAPIKey != "" || settings.TwoCaptchaAPIKey != ""
 
-	if settings.CapSolverAPIKey == "" && settings.EZCaptchaAPIKey == "" && settings.TwoCaptchaAPIKey == "" {
-		if time.Since(lastCheckTime) < cfg.RateLimits.Default {
-			return false
-		}
+	if !hasCustomKey && time.Since(lastCheckTime) < cfg.RateLimits.Default {
+		return false
 	}
 
 	if time.Since(lastCheckTime) < checkInterval {
@@ -286,9 +277,8 @@ func handleCheckError(s *discordgo.Session, account *models.Account, err error) 
 	}
 
 	if account.ConsecutiveErrors >= cfg.CaptchaService.MaxRetries {
-		reason := fmt.Sprintf("Max consecutive errors reached (%d). Last error: %v",
-			cfg.CaptchaService.MaxRetries, err)
-		disableAccount(s, *account, reason)
+		disableAccount(s, *account, fmt.Sprintf("Max consecutive errors reached (%d). Last error: %v",
+			cfg.CaptchaService.MaxRetries, err))
 	}
 }
 
