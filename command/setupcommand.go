@@ -16,6 +16,7 @@ import (
 	"github.com/bradselph/CODStatusBot/command/removeaccount"
 	"github.com/bradselph/CODStatusBot/command/setcaptchaservice"
 	"github.com/bradselph/CODStatusBot/command/setcheckinterval"
+	"github.com/bradselph/CODStatusBot/command/setephemeral"
 	"github.com/bradselph/CODStatusBot/command/setnotifications"
 	"github.com/bradselph/CODStatusBot/command/togglecheck"
 	"github.com/bradselph/CODStatusBot/command/updateaccount"
@@ -52,6 +53,11 @@ func RegisterCommands(s *discordgo.Session) error {
 		{
 			Name:         "setnotifications",
 			Description:  "Set your notification preferences (channel or DM)",
+			DMPermission: BoolPtr(true),
+		},
+		{
+			Name:         "setephemeral",
+			Description:  "Toggle ephemeral (only visible to you) responses",
 			DMPermission: BoolPtr(true),
 		},
 		{
@@ -154,6 +160,7 @@ func RegisterCommands(s *discordgo.Session) error {
 	Handlers["updateaccount"] = updateaccount.CommandUpdateAccount
 	Handlers["togglecheck"] = togglecheck.CommandToggleCheck
 	Handlers["setnotifications"] = setnotifications.CommandSetNotifications
+	Handlers["setephemeral"] = setephemeral.CommandSetEphemeral
 	Handlers["verdansk"] = verdansk.CommandVerdansk
 
 	Handlers["set_notifications_modal"] = setnotifications.HandleModalSubmit
@@ -170,6 +177,8 @@ func RegisterCommands(s *discordgo.Session) error {
 	Handlers["toggle_check"] = togglecheck.HandleAccountSelection
 	Handlers["feedback_anonymous"] = feedback.HandleFeedbackChoice
 	Handlers["feedback_with_id"] = feedback.HandleFeedbackChoice
+	Handlers["set_ephemeral_enable"] = setephemeral.HandleEphemeralSelection
+	Handlers["set_ephemeral_disable"] = setephemeral.HandleEphemeralSelection
 	Handlers["show_interval_modal"] = setcheckinterval.HandleButton
 	Handlers["verdansk_provide_id"] = verdansk.HandleMethodSelection
 	Handlers["verdansk_select_account"] = verdansk.HandleMethodSelection

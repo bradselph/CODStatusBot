@@ -15,6 +15,7 @@ import (
 	"github.com/bradselph/CODStatusBot/command/removeaccount"
 	"github.com/bradselph/CODStatusBot/command/setcaptchaservice"
 	"github.com/bradselph/CODStatusBot/command/setcheckinterval"
+	"github.com/bradselph/CODStatusBot/command/setephemeral"
 	"github.com/bradselph/CODStatusBot/command/setnotifications"
 	"github.com/bradselph/CODStatusBot/command/togglecheck"
 	"github.com/bradselph/CODStatusBot/command/updateaccount"
@@ -155,6 +156,8 @@ func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate
 		setcaptchaservice.HandleCaptchaServiceSelection(s, i)
 	case strings.HasPrefix(customID, "feedback_"):
 		feedback.HandleFeedbackChoice(s, i)
+	case strings.HasPrefix(customID, "set_ephemeral_"):
+		setephemeral.HandleEphemeralSelection(s, i)
 	case strings.HasPrefix(customID, "account_age_"):
 		accountage.HandleAccountSelection(s, i)
 	case strings.HasPrefix(customID, "account_logs_"):

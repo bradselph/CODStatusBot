@@ -255,39 +255,41 @@ func (q *NotificationQueue) Shutdown(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func CleanupOldRateLimitData() {
-	adaptiveRateLimits.Lock()
-	defer adaptiveRateLimits.Unlock()
 
-	now := time.Now()
-	initialCount := len(adaptiveRateLimits.UserBackoffs)
-	cleaned := 0
+/*
+	func CleanupOldRateLimitData() {
+		adaptiveRateLimits.Lock()
+		defer adaptiveRateLimits.Unlock()
 
-	for userID, backoff := range adaptiveRateLimits.UserBackoffs {
-		var recentHistory []time.Time
-		for _, t := range backoff.NotificationHistory {
-			if now.Sub(t) <= adaptiveRateLimits.HistoryWindow {
-				recentHistory = append(recentHistory, t)
+		now := time.Now()
+		initialCount := len(adaptiveRateLimits.UserBackoffs)
+		cleaned := 0
+
+		for userID, backoff := range adaptiveRateLimits.UserBackoffs {
+			var recentHistory []time.Time
+			for _, t := range backoff.NotificationHistory {
+				if now.Sub(t) <= adaptiveRateLimits.HistoryWindow {
+					recentHistory = append(recentHistory, t)
+				}
+			}
+
+			if len(recentHistory) == 0 {
+				backoff.BackoffMultiplier = 1.0
+				backoff.ConsecutiveCount = 0
+				cleaned++
+			}
+
+			backoff.NotificationHistory = recentHistory
+
+			if len(recentHistory) == 0 && now.Sub(backoff.LastSent) > adaptiveRateLimits.HistoryWindow {
+				delete(adaptiveRateLimits.UserBackoffs, userID)
+				cleaned++
 			}
 		}
 
-		if len(recentHistory) == 0 {
-			backoff.BackoffMultiplier = 1.0
-			backoff.ConsecutiveCount = 0
-			cleaned++
-		}
-
-		backoff.NotificationHistory = recentHistory
-
-		if len(recentHistory) == 0 && now.Sub(backoff.LastSent) > adaptiveRateLimits.HistoryWindow {
-			delete(adaptiveRateLimits.UserBackoffs, userID)
-			cleaned++
-		}
+		logger.Log.Infof("Rate limit cleanup completed: processed %d entries, cleaned %d", initialCount, cleaned)
 	}
-
-	logger.Log.Infof("Rate limit cleanup completed: processed %d entries, cleaned %d", initialCount, cleaned)
-}
-
+*/
 func IsUserRateLimited(userID string) bool {
 	if userID == "" {
 		logger.Log.Warning("Empty userID passed to IsUserRateLimited")

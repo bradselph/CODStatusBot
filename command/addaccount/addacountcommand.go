@@ -307,7 +307,7 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			return
 		}
 
-		services.HandleStatusChange(s, updatedAccount, status, userSettings)
+		services.HandleStatusChange(s, updatedAccount, status, &userSettings)
 	}()
 }
 

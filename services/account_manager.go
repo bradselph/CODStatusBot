@@ -167,6 +167,51 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 	}
 }
 
+/*
+	func processUserAccounts(s *discordgo.Session, userID string, accounts []models.Account) {
+		logger.Log.Debugf("Processing %d accounts for user %s", len(accounts), userID)
+
+		userSettings, err := GetUserSettings(userID)
+		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to get user settings for %s", userID)
+			return
+		}
+
+		for _, account := range accounts {
+			if account.IsCheckDisabled || account.IsExpiredCookie {
+				continue
+			}
+
+			if time.Since(time.Unix(account.LastCheck, 0)) < time.Duration(userSettings.CheckInterval)*time.Minute {
+				continue
+			}
+
+			result, err := CheckAccount(account.SSOCookie, userID, "")
+			if err != nil {
+				logger.Log.WithError(err).Errorf("Error checking account %s", account.Title)
+				account.ConsecutiveErrors++
+				account.LastErrorTime = time.Now()
+
+				if account.ConsecutiveErrors >= maxConsecutiveErrors {
+					disableAccount(s, account, fmt.Sprintf("Too many consecutive errors: %v", err))
+				} else {
+					database.DB.Save(&account)
+				}
+				continue
+			}
+
+			account.LastCheck = time.Now().Unix()
+			account.ConsecutiveErrors = 0
+			account.LastSuccessfulCheck = time.Now()
+
+			HandleStatusChange(s, account, result, userSettings)
+
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to save account after check")
+			}
+		}
+	}
+*/
 func notifyUserOfServiceIssue(s *discordgo.Session, userID string, err error) {
 	cfg := configuration.Get()
 	if userID != cfg.Discord.DeveloperID {
@@ -293,7 +338,7 @@ func processNotifications(s *discordgo.Session, accounts []models.Account, userS
 		}
 
 		logger.Log.Infof("Processing notification for account %s with status: %s", account.Title, account.LastStatus)
-		HandleStatusChange(s, account, account.LastStatus, userSettings)
+		HandleStatusChange(s, account, account.LastStatus, &userSettings)
 	}
 }
 

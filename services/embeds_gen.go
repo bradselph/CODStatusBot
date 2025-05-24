@@ -75,6 +75,10 @@ func GetColorForStatus(status models.Status, isExpiredCookie bool, isCheckDisabl
 		return 0xFFA500 // Orange for shadowban
 	case models.StatusTempban:
 		return 0xFF8C00 // Dark Orange for temporary ban
+	case models.StatusRankLocked:
+		return 0xFFD700 // Gold for rank locked
+	case models.StatusPartialBan:
+		return 0xFF4500 // OrangeRed for partial ban
 	case models.StatusGood:
 		return 0x32CD32 // Lime Green for good status
 	default:
@@ -90,23 +94,289 @@ func EmbedTitleFromStatus(status models.Status) string {
 		return "PERMANENT BAN DETECTED"
 	case models.StatusShadowban:
 		return "ACCOUNT UNDER REVIEW (SHADOWBAN)"
+	case models.StatusRankLocked:
+		return "RANKED PLAY RESTRICTED"
+	case models.StatusPartialBan:
+		return "GAME-SPECIFIC RESTRICTIONS"
 	default:
 		return "ACCOUNT NOT BANNED"
 	}
 }
 
 func GetStatusDescription(status models.Status, accountTitle string, ban models.Ban) string {
-	affectedGames := strings.Split(ban.AffectedGames, ",")
-	gamesList := strings.Join(affectedGames, ", ")
-
 	switch status {
 	case models.StatusPermaban:
-		return fmt.Sprintf("The account %s has been permanently banned.\nAffected games: %s", accountTitle, gamesList)
+		desc := fmt.Sprintf("The account %s has been permanently banned.", accountTitle)
+		if ban.AffectedGames != "" {
+			desc += fmt.Sprintf("\n\n**Affected Games:**\n%s", formatAffectedGames(ban.AffectedGames))
+		}
+		return desc
+
 	case models.StatusShadowban:
-		return fmt.Sprintf("The account %s has been placed under review (shadowban).\nAffected games: %s", accountTitle, gamesList)
+		desc := fmt.Sprintf("The account %s has been placed under review (shadowban).", accountTitle)
+		if ban.AffectedGames != "" {
+			desc += fmt.Sprintf("\n\n**Affected Games:**\n%s", formatAffectedGames(ban.AffectedGames))
+		}
+		return desc
+
 	case models.StatusTempban:
-		return fmt.Sprintf("The account %s is temporarily banned for %s.\nAffected games: %s", accountTitle, ban.TempBanDuration, gamesList)
+		desc := fmt.Sprintf("The account %s is temporarily banned", accountTitle)
+		if ban.TempBanDuration != "" {
+			desc += fmt.Sprintf(" for %s", ban.TempBanDuration)
+		}
+		desc += "."
+		if ban.AffectedGames != "" {
+			desc += fmt.Sprintf("\n\n**Affected Games:**\n%s", formatAffectedGames(ban.AffectedGames))
+		}
+		return desc
+
+	case models.StatusRankLocked:
+		desc := fmt.Sprintf("The account %s is restricted from ranked play only.\n", accountTitle)
+		desc += "Regular multiplayer and other game modes remain available.\n\n"
+		desc += "This restriction typically persists even after shadowbans are lifted."
+		if len(ban.GameSpecificBans) > 0 {
+			desc += "\n\n**Game-Specific Status:**"
+			for title, enforcement := range ban.GameSpecificBans {
+				desc += fmt.Sprintf("\n• %s: %s", title, formatEnforcement(enforcement))
+			}
+		}
+		return desc
+
+	case models.StatusPartialBan:
+		desc := fmt.Sprintf("The account %s has game-specific restrictions.", accountTitle)
+		if len(ban.GameSpecificBans) > 0 {
+			desc += "\n\n**Game-Specific Status:**"
+			for title, enforcement := range ban.GameSpecificBans {
+				desc += fmt.Sprintf("\n• %s: %s", title, formatEnforcement(enforcement))
+			}
+		}
+		return desc
+
 	default:
 		return fmt.Sprintf("The account %s is currently not banned.", accountTitle)
+	}
+}
+
+func formatAffectedGames(games string) string {
+	if games == "" || games == "All Games" {
+		return "All Call of Duty titles"
+	}
+
+	gameList := strings.Split(games, ", ")
+	formattedList := make([]string, len(gameList))
+
+	for i, game := range gameList {
+		formattedList[i] = fmt.Sprintf("• %s", formatGameTitle(game))
+	}
+
+	return strings.Join(formattedList, "\n")
+}
+
+func formatGameTitle(title string) string {
+	replacements := map[string]string{
+		"COD:BO6 SP": "Call of Duty: Black Ops 6 (Campaign)",
+		"COD:BO6":    "Call of Duty: Black Ops 6 (Multiplayer)",
+		"COD:MW3":    "Call of Duty: Modern Warfare III",
+		"COD:MW2":    "Call of Duty: Modern Warfare II",
+		"COD:WZ":     "Call of Duty: Warzone",
+		"COD:WZ2":    "Call of Duty: Warzone 2.0",
+		"COD:DMZ":    "Call of Duty: DMZ",
+	}
+
+	if formatted, exists := replacements[title]; exists {
+		return formatted
+	}
+
+	return title
+}
+
+func formatEnforcement(enforcement string) string {
+	switch enforcement {
+	case "PERMANENT":
+		return "Permanently Banned 🔴"
+	case "UNDER_REVIEW":
+		return "Under Review 🟡"
+	case "TEMPORARY":
+		return "Temporarily Banned 🟠"
+	default:
+		return enforcement
+	}
+}
+
+func CreateAccountListEmbed(accounts []models.Account, userID string, page int, totalPages int) *discordgo.MessageEmbed {
+	embed := &discordgo.MessageEmbed{
+		Title:     fmt.Sprintf("Your Monitored Accounts (Page %d/%d)", page, totalPages),
+		Color:     0x00FF00,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	if len(accounts) == 0 {
+		embed.Description = "You don't have any monitored accounts."
+		return embed
+	}
+
+	for _, account := range accounts {
+		statusEmoji := getStatusEmoji(account.LastStatus)
+		fieldValue := fmt.Sprintf("Status: %s %s\nLast Check: %s",
+			statusEmoji,
+			account.LastStatus,
+			time.Unix(account.LastCheck, 0).Format("Jan 2, 15:04"))
+
+		if account.IsExpiredCookie {
+			fieldValue += "\n⚠️ **Cookie Expired**"
+		}
+		if account.IsCheckDisabled {
+			fieldValue += "\n🚫 **Checks Disabled**"
+		}
+		if account.IsRankLocked {
+			fieldValue += "\n🔒 **Ranked Play Locked**"
+		}
+
+		if len(account.GameSpecificBans) > 0 {
+			fieldValue += "\n📋 **Game-Specific Bans:**"
+			for title, enforcement := range account.GameSpecificBans {
+				fieldValue += fmt.Sprintf("\n  • %s: %s", formatGameTitle(title), enforcement)
+			}
+		}
+
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   fmt.Sprintf("%s (ID: %d)", account.Title, account.ID),
+			Value:  fieldValue,
+			Inline: true,
+		})
+	}
+
+	embed.Footer = &discordgo.MessageEmbedFooter{
+		Text: fmt.Sprintf("Total Accounts: %d", len(accounts)),
+	}
+
+	return embed
+}
+
+func getStatusEmoji(status models.Status) string {
+	switch status {
+	case models.StatusGood:
+		return "✅"
+	case models.StatusPermaban:
+		return "🚫"
+	case models.StatusShadowban:
+		return "⚠️"
+	case models.StatusTempban:
+		return "⏳"
+	case models.StatusRankLocked:
+		return "🔒"
+	case models.StatusPartialBan:
+		return "📋"
+	case models.StatusInvalidCookie:
+		return "🍪"
+	default:
+		return "❓"
+	}
+}
+
+func CreateCheckResultEmbed(account models.Account, status models.Status, userSettings models.UserSettings) *discordgo.MessageEmbed {
+	embed := &discordgo.MessageEmbed{
+		Title:     fmt.Sprintf("%s - Status Check", account.Title),
+		Color:     GetColorForStatus(status, account.IsExpiredCookie, account.IsCheckDisabled),
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	if account.IsCheckDisabled {
+		embed.Description = fmt.Sprintf("Checks are disabled for this account.\nReason: %s", account.DisabledReason)
+		return embed
+	}
+
+	if account.IsExpiredCookie {
+		embed.Description = "The SSO cookie for this account has expired. Please update it using the /updateaccount command."
+		return embed
+	}
+
+	embed.Description = fmt.Sprintf("Current status: **%s**", status)
+
+	embed.Fields = []*discordgo.MessageEmbedField{
+		{
+			Name:   "Last Checked",
+			Value:  time.Now().Format(time.RFC1123),
+			Inline: true,
+		},
+	}
+
+	if len(account.GameSpecificBans) > 0 {
+		var gameDetails []string
+		for title, enforcement := range account.GameSpecificBans {
+			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", formatGameTitle(title), formatEnforcement(enforcement)))
+		}
+
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   "Game-Specific Status",
+			Value:  strings.Join(gameDetails, "\n"),
+			Inline: false,
+		})
+	}
+
+	switch status {
+	case models.StatusRankLocked:
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   "⚠️ Important Notice",
+			Value:  "This account is restricted from ranked play only. Regular multiplayer remains available.",
+			Inline: false,
+		})
+	case models.StatusPermaban:
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   "🚫 Action Required",
+			Value:  "Consider removing this account using /removeaccount to free up a slot.",
+			Inline: false,
+		})
+	}
+
+	if isVIP, err := CheckVIPStatus(account.SSOCookie); err == nil {
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   "VIP Status",
+			Value:  formatVIPStatus(isVIP),
+			Inline: true,
+		})
+	}
+
+	if !account.IsExpiredCookie && account.SSOCookieExpiration > 0 {
+		timeUntilExpiration, err := CheckSSOCookieExpiration(account.SSOCookieExpiration)
+		if err == nil {
+			embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+				Name:   "Cookie Expires",
+				Value:  FormatDuration(timeUntilExpiration),
+				Inline: true,
+			})
+		}
+	}
+
+	return embed
+}
+
+func CreateErrorEmbed(title string, errorMessage string) *discordgo.MessageEmbed {
+	return &discordgo.MessageEmbed{
+		Title:       title,
+		Description: errorMessage,
+		Color:       0xFF0000, // Red
+		Timestamp:   time.Now().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "If this error persists, please contact support",
+		},
+	}
+}
+
+func CreateSuccessEmbed(title string, message string) *discordgo.MessageEmbed {
+	return &discordgo.MessageEmbed{
+		Title:       title,
+		Description: message,
+		Color:       0x00FF00, // Green
+		Timestamp:   time.Now().Format(time.RFC3339),
+	}
+}
+
+func CreateInfoEmbed(title string, message string) *discordgo.MessageEmbed {
+	return &discordgo.MessageEmbed{
+		Title:       title,
+		Description: message,
+		Color:       0x0099FF, // Blue
+		Timestamp:   time.Now().Format(time.RFC3339),
 	}
 }
