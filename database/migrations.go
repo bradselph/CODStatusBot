@@ -128,6 +128,13 @@ func RunMigrations() {
 			logger.Log.WithError(err).Error("Failed to add game_specific_bans column to Ban table")
 		}
 	}
+
+	if !DB.Migrator().HasColumn(&models.Account{}, "is_campaign_only_shadowban") {
+		logger.Log.Info("Adding is_campaign_only_shadowban column to Account table")
+		if err := DB.Exec("ALTER TABLE accounts ADD COLUMN is_campaign_only_shadowban BOOLEAN DEFAULT FALSE").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add is_campaign_only_shadowban column to Account table")
+		}
+	}
 }
 
 func CleanupInvalidTimestamps() {

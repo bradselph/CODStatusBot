@@ -114,6 +114,31 @@ func GetStatusDescription(status models.Status, accountTitle string, ban models.
 
 	case models.StatusShadowban:
 		desc := fmt.Sprintf("The account %s has been placed under review (shadowban).", accountTitle)
+
+		isCampaignOnlyShadowban := false
+		if len(ban.GameSpecificBans) > 0 {
+			campaignBanCount := 0
+			otherBanCount := 0
+
+			for title, enforcement := range ban.GameSpecificBans {
+				if enforcement == "UNDER_REVIEW" {
+					if strings.Contains(title, "SP") || strings.Contains(title, "CAMPAIGN") {
+						campaignBanCount++
+					} else {
+						otherBanCount++
+					}
+				}
+			}
+
+			if campaignBanCount > 0 && otherBanCount == 0 {
+				isCampaignOnlyShadowban = true
+			}
+		}
+
+		if isCampaignOnlyShadowban {
+			desc += "\n\n**Important Note:**\nThis appears to be a campaign-only shadowban. The limited matchmaking effect will disappear after the normal shadowban timeframe, but you may still see 'Under Review' status for the campaign mode permanently."
+		}
+
 		if ban.AffectedGames != "" {
 			desc += fmt.Sprintf("\n\n**Affected Games:**\n%s", formatAffectedGames(ban.AffectedGames))
 		}
@@ -133,11 +158,25 @@ func GetStatusDescription(status models.Status, accountTitle string, ban models.
 	case models.StatusRankLocked:
 		desc := fmt.Sprintf("The account %s is restricted from ranked play only.\n", accountTitle)
 		desc += "Regular multiplayer and other game modes remain available.\n\n"
-		desc += "This restriction typically persists even after shadowbans are lifted."
+
+		isBo6CampaignShadowban := false
+		for title, enforcement := range ban.GameSpecificBans {
+			if strings.Contains(title, "BO6 SP") && enforcement == "UNDER_REVIEW" {
+				isBo6CampaignShadowban = true
+				break
+			}
+		}
+
+		if isBo6CampaignShadowban {
+			desc += "This appears to be a BO6 campaign-specific restriction. The account will show as 'Under Review' for the campaign mode, but this won't affect regular multiplayer matchmaking after the normal shadowban period."
+		} else {
+			desc += "This restriction typically persists even after shadowbans are lifted."
+		}
+
 		if len(ban.GameSpecificBans) > 0 {
 			desc += "\n\n**Game-Specific Status:**"
 			for title, enforcement := range ban.GameSpecificBans {
-				desc += fmt.Sprintf("\n• %s: %s", title, formatEnforcement(enforcement))
+				desc += fmt.Sprintf("\n• %s: %s", formatGameTitle(title), formatEnforcement(enforcement))
 			}
 		}
 		return desc
@@ -147,7 +186,7 @@ func GetStatusDescription(status models.Status, accountTitle string, ban models.
 		if len(ban.GameSpecificBans) > 0 {
 			desc += "\n\n**Game-Specific Status:**"
 			for title, enforcement := range ban.GameSpecificBans {
-				desc += fmt.Sprintf("\n• %s: %s", title, formatEnforcement(enforcement))
+				desc += fmt.Sprintf("\n• %s: %s", formatGameTitle(title), formatEnforcement(enforcement))
 			}
 		}
 		return desc
@@ -235,7 +274,7 @@ func CreateAccountListEmbed(accounts []models.Account, userID string, page int, 
 		if len(account.GameSpecificBans) > 0 {
 			fieldValue += "\n📋 **Game-Specific Bans:**"
 			for title, enforcement := range account.GameSpecificBans {
-				fieldValue += fmt.Sprintf("\n  • %s: %s", formatGameTitle(title), enforcement)
+				fieldValue += fmt.Sprintf("\n  • %s: %s", formatGameTitle(title), formatEnforcement(enforcement))
 			}
 		}
 
@@ -303,6 +342,27 @@ func CreateCheckResultEmbed(account models.Account, status models.Status, userSe
 
 	if len(account.GameSpecificBans) > 0 {
 		var gameDetails []string
+
+		isBo6CampaignShadowban := account.IsCampaignOnlyShadowban
+		if !isBo6CampaignShadowban && (status == models.StatusShadowban || status == models.StatusRankLocked) {
+			campaignUnderReview := false
+			otherUnderReview := false
+
+			for title, enforcement := range account.GameSpecificBans {
+				if enforcement == "UNDER_REVIEW" {
+					if strings.Contains(title, "BO6 SP") {
+						campaignUnderReview = true
+					} else {
+						otherUnderReview = true
+					}
+				}
+			}
+
+			if campaignUnderReview && !otherUnderReview {
+				isBo6CampaignShadowban = true
+			}
+		}
+
 		for title, enforcement := range account.GameSpecificBans {
 			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", formatGameTitle(title), formatEnforcement(enforcement)))
 		}
@@ -312,6 +372,14 @@ func CreateCheckResultEmbed(account models.Account, status models.Status, userSe
 			Value:  strings.Join(gameDetails, "\n"),
 			Inline: false,
 		})
+
+		if isBo6CampaignShadowban {
+			embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+				Name:   "📋 BO6 Campaign Restriction",
+				Value:  "This appears to be a BO6 campaign-specific shadowban. The 'Under Review' status for campaign may remain even after shadowban effects disappear from multiplayer.",
+				Inline: false,
+			})
+		}
 	}
 
 	switch status {

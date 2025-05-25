@@ -321,6 +321,7 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 
 	hasCampaignBan := false
 	hasMultiplayerBan := false
+	onlyCampaignBanUnderReview := true
 
 	for _, ban := range data.Bans {
 		logger.Log.WithField("ban", ban).Info("Processing ban")
@@ -331,6 +332,10 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 			hasCampaignBan = true
 			if ban.Enforcement == "UNDER_REVIEW" {
 				isRankLocked = true
+			}
+		} else {
+			if ban.Enforcement == "UNDER_REVIEW" {
+				onlyCampaignBanUnderReview = false
 			}
 		}
 
@@ -352,13 +357,20 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		}
 	}
 
-	if hasCampaignBan && hasMultiplayerBan && overallStatus == models.StatusShadowban {
-		isRankLocked = true
-		if len(gameSpecificBans) == 2 {
-			for title, enforcement := range gameSpecificBans {
-				if enforcement == "UNDER_REVIEW" && strings.Contains(title, "SP") {
-					overallStatus = models.StatusRankLocked
-					break
+	if hasCampaignBan && overallStatus == models.StatusShadowban {
+		if onlyCampaignBanUnderReview {
+			logger.Log.Info("Detected BO6 campaign shadowban case - this is a limited matchmaking mode ban")
+			overallStatus = models.StatusRankLocked
+			isRankLocked = true
+			account.IsCampaignOnlyShadowban = true
+		} else if hasMultiplayerBan {
+			isRankLocked = true
+			if len(gameSpecificBans) == 2 {
+				for title, enforcement := range gameSpecificBans {
+					if enforcement == "UNDER_REVIEW" && strings.Contains(title, "SP") {
+						overallStatus = models.StatusRankLocked
+						break
+					}
 				}
 			}
 		}

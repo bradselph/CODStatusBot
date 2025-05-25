@@ -237,14 +237,43 @@ func createStatusChangeEmbed(account models.Account, newStatus models.Status, pr
 
 	if len(account.GameSpecificBans) > 0 {
 		var gameDetails []string
+
+		isBo6CampaignShadowban := account.IsCampaignOnlyShadowban
+		if !isBo6CampaignShadowban && (newStatus == models.StatusShadowban || newStatus == models.StatusRankLocked) {
+			campaignUnderReview := false
+			otherUnderReview := false
+
+			for title, enforcement := range account.GameSpecificBans {
+				if enforcement == "UNDER_REVIEW" {
+					if strings.Contains(title, "BO6 SP") {
+						campaignUnderReview = true
+					} else {
+						otherUnderReview = true
+					}
+				}
+			}
+
+			if campaignUnderReview && !otherUnderReview {
+				isBo6CampaignShadowban = true
+			}
+		}
+
 		for title, enforcement := range account.GameSpecificBans {
-			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", title, enforcement))
+			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", formatGameTitle(title), formatEnforcement(enforcement)))
 		}
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
 			Name:   "Game-Specific Status",
 			Value:  strings.Join(gameDetails, "\n"),
 			Inline: false,
 		})
+
+		if isBo6CampaignShadowban {
+			embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+				Name:   "📋 BO6 Campaign Note",
+				Value:  "This appears to be a BO6 campaign-specific shadowban. The game will show 'Under Review' for campaign permanently, but multiplayer restrictions will be lifted after the normal shadowban period.",
+				Inline: false,
+			})
+		}
 	}
 
 	if newStatus == models.StatusRankLocked {
@@ -259,17 +288,52 @@ func createStatusChangeEmbed(account models.Account, newStatus models.Status, pr
 }
 
 func handleRankLockedNotification(s *discordgo.Session, account models.Account, ban models.Ban) {
+	isBo6CampaignShadowban := account.IsCampaignOnlyShadowban
+	if !isBo6CampaignShadowban && len(account.GameSpecificBans) > 0 {
+		campaignUnderReview := false
+		otherUnderReview := false
+
+		for title, enforcement := range account.GameSpecificBans {
+			if enforcement == "UNDER_REVIEW" {
+				if strings.Contains(title, "BO6 SP") {
+					campaignUnderReview = true
+				} else {
+					otherUnderReview = true
+				}
+			}
+		}
+
+		if campaignUnderReview && !otherUnderReview {
+			isBo6CampaignShadowban = true
+		}
+	}
+
+	description := "Your account has a persistent ranked play restriction. " +
+		"You can still play regular multiplayer and other game modes, but ranked play is disabled."
+
+	if isBo6CampaignShadowban {
+		description = "Your account has a BO6 campaign-specific restriction. " +
+			"This type of restriction shows as 'Under Review' permanently for campaign mode, " +
+			"but the shadowban effects on multiplayer will disappear after the normal timeframe."
+	} else {
+		description += "\n\nThis is typically a permanent restriction that remains even after shadowbans are lifted."
+	}
+
 	rankLockedEmbed := &discordgo.MessageEmbed{
-		Title: fmt.Sprintf("%s - Ranked Play Restriction", account.Title),
-		Description: "Your account has a persistent ranked play restriction. " +
-			"You can still play regular multiplayer and other game modes, but ranked play is disabled.\n\n" +
-			"This is typically a permanent restriction that remains even after shadowbans are lifted.",
-		Color:     GetColorForStatus(models.StatusRankLocked, false, false),
-		Timestamp: time.Now().Format(time.RFC3339),
+		Title:       fmt.Sprintf("%s - Ranked Play Restriction", account.Title),
+		Description: description,
+		Color:       GetColorForStatus(models.StatusRankLocked, false, false),
+		Timestamp:   time.Now().Format(time.RFC3339),
 		Fields: []*discordgo.MessageEmbedField{
 			{
-				Name:   "Restriction Type",
-				Value:  "Ranked Play Only",
+				Name: "Restriction Type",
+				Value: func() string {
+					if isBo6CampaignShadowban {
+						return "Campaign Only"
+					} else {
+						return "Ranked Play Only"
+					}
+				}(),
 				Inline: true,
 			},
 			{
@@ -283,7 +347,7 @@ func handleRankLockedNotification(s *discordgo.Session, account models.Account, 
 	if len(account.GameSpecificBans) > 0 {
 		var gameDetails []string
 		for title, enforcement := range account.GameSpecificBans {
-			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", title, enforcement))
+			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", formatGameTitle(title), formatEnforcement(enforcement)))
 		}
 		rankLockedEmbed.Fields = append(rankLockedEmbed.Fields, &discordgo.MessageEmbedField{
 			Name:   "Detailed Status",
@@ -492,7 +556,7 @@ func handlePermaBanNotification(s *discordgo.Session, account models.Account, ba
 	if len(account.GameSpecificBans) > 0 {
 		var gameDetails []string
 		for title, enforcement := range account.GameSpecificBans {
-			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", title, enforcement))
+			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", formatGameTitle(title), formatEnforcement(enforcement)))
 		}
 		permaBanEmbed.Fields = append(permaBanEmbed.Fields, &discordgo.MessageEmbedField{
 			Name:   "Game-Specific Details",
@@ -507,13 +571,52 @@ func handlePermaBanNotification(s *discordgo.Session, account models.Account, ba
 }
 
 func handleShadowBanNotification(s *discordgo.Session, account models.Account, ban models.Ban) {
+	isBo6CampaignShadowban := account.IsCampaignOnlyShadowban
+	if !isBo6CampaignShadowban && len(account.GameSpecificBans) > 0 {
+		campaignUnderReview := false
+		otherUnderReview := false
+
+		for title, enforcement := range account.GameSpecificBans {
+			if enforcement == "UNDER_REVIEW" {
+				if strings.Contains(title, "BO6 SP") {
+					campaignUnderReview = true
+				} else {
+					otherUnderReview = true
+				}
+			}
+		}
+
+		if campaignUnderReview && !otherUnderReview {
+			isBo6CampaignShadowban = true
+		}
+	}
+
+	description := fmt.Sprintf("Your account has been placed under review (shadowban). " +
+		"This typically means your account is being investigated.")
+
+	if isBo6CampaignShadowban {
+		description += "\n\n**BO6 Campaign Note:**\nThis appears to be a campaign-specific shadowban. The game will continue to show 'Under Review' for campaign mode, but multiplayer restrictions will be lifted after the normal shadowban period."
+	}
+
 	shadowBanEmbed := &discordgo.MessageEmbed{
-		Title: fmt.Sprintf("%s - Account Under Review", account.Title),
-		Description: "Your account has been placed under review (shadowban). " +
-			"This typically means your account is being investigated.",
-		Color:     GetColorForStatus(models.StatusShadowban, false, false),
-		Timestamp: time.Now().Format(time.RFC3339),
-		Fields:    getStatusFields(account, models.StatusShadowban, ban),
+		Title:       fmt.Sprintf("%s - Account Under Review", account.Title),
+		Description: description,
+		Color:       GetColorForStatus(models.StatusShadowban, false, false),
+		Timestamp:   time.Now().Format(time.RFC3339),
+		Fields:      getStatusFields(account, models.StatusShadowban, ban),
+	}
+
+	if len(account.GameSpecificBans) > 0 {
+		var gameDetails []string
+		for title, enforcement := range account.GameSpecificBans {
+			gameDetails = append(gameDetails, fmt.Sprintf("**%s**: %s", formatGameTitle(title), formatEnforcement(enforcement)))
+		}
+
+		shadowBanEmbed.Fields = append(shadowBanEmbed.Fields, &discordgo.MessageEmbedField{
+			Name:   "Game-Specific Status",
+			Value:  strings.Join(gameDetails, "\n"),
+			Inline: false,
+		})
 	}
 
 	if err := SendNotification(s, account, shadowBanEmbed, "", "shadowban_notice"); err != nil {

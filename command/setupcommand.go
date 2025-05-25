@@ -201,7 +201,7 @@ func RegisterCommands(s *discordgo.Session) error {
 func HandleCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	startTime := time.Now()
 	var userID string
-	var success bool = true
+	var success = true
 	var errorDetails string
 	var commandName string
 
