@@ -4,7 +4,6 @@ go 1.24.3
 
 require (
 	github.com/bwmarrin/discordgo v0.28.1
-	github.com/getsentry/sentry-go v0.33.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/sirupsen/logrus v1.9.3
 	gorm.io/driver/mysql v1.5.7

@@ -16,18 +16,6 @@ import (
 	"github.com/bradselph/CODStatusBot/logger"
 )
 
-const (
-	CapsolverCreateEndpoint   = "https://api.capsolver.com/createTask"
-	CapsolverResultEndpoint   = "https://api.capsolver.com/getTaskResult"
-	CapsolverFeedbackEndpoint = "https://api.capsolver.com/feedbackTask"
-	EZCaptchaCreateEndpoint   = "https://api.ez-captcha.com/createTask"
-	EZCaptchaResultEndpoint   = "https://api.ez-captcha.com/getTaskResult"
-	TwoCaptchaCreateEndpoint  = "https://api.2captcha.com/createTask"
-	TwoCaptchaResultEndpoint  = "https://api.2captcha.com/getTaskResult"
-	MaxRetries                = 6
-	RetryInterval             = 10 * time.Second
-)
-
 type CaptchaSolver interface {
 	SolveReCaptchaV2(siteKey, pageURL string) (string, error)
 }
@@ -140,6 +128,8 @@ func reportCapsolverTaskResult(apiKey, appID, taskID string, isValid bool, error
 		return errors.New("missing required parameters for feedback report")
 	}
 
+	cfg := configuration.Get()
+
 	payload := map[string]interface{}{
 		"clientKey": apiKey,
 		"taskId":    taskID,
@@ -160,7 +150,7 @@ func reportCapsolverTaskResult(apiKey, appID, taskID string, isValid bool, error
 		}
 	}
 
-	resp, err := sendRequest(CapsolverFeedbackEndpoint, payload)
+	resp, err := sendRequest(cfg.CaptchaEndpoints.Capsolver.Feedback, payload)
 	if err != nil {
 		return fmt.Errorf("failed to send feedback: %w", err)
 	}
@@ -295,6 +285,8 @@ func (s *CapsolverSolver) createTask(siteKey, pageURL string) (string, error) {
 		return "", fmt.Errorf("AppID is not configured")
 	}
 
+	cfg := configuration.Get()
+
 	payload := map[string]interface{}{
 		"clientKey": s.APIKey,
 		"appId":     s.AppID,
@@ -306,7 +298,7 @@ func (s *CapsolverSolver) createTask(siteKey, pageURL string) (string, error) {
 		},
 	}
 
-	resp, err := sendRequest(CapsolverCreateEndpoint, payload)
+	resp, err := sendRequest(cfg.CaptchaEndpoints.Capsolver.Create, payload)
 	if err != nil {
 		return "", err
 	}
@@ -335,6 +327,8 @@ func (s *EZCaptchaSolver) createTask(siteKey, pageURL string) (string, error) {
 		return "", fmt.Errorf("EzappID is not configured")
 	}
 
+	cfg := configuration.Get()
+
 	payload := map[string]interface{}{
 		"clientKey": s.APIKey,
 		"appId":     s.EzappID,
@@ -346,7 +340,7 @@ func (s *EZCaptchaSolver) createTask(siteKey, pageURL string) (string, error) {
 		},
 	}
 
-	resp, err := sendRequest(EZCaptchaCreateEndpoint, payload)
+	resp, err := sendRequest(cfg.CaptchaEndpoints.EZCaptcha.Create, payload)
 	if err != nil {
 		return "", err
 	}
@@ -375,6 +369,8 @@ func (s *TwoCaptchaSolver) createTask(siteKey, pageURL string) (string, error) {
 		return "", fmt.Errorf("SoftID is not configured")
 	}
 
+	cfg := configuration.Get()
+
 	payload := map[string]interface{}{
 		"clientKey": s.APIKey,
 		"softId":    s.SoftID,
@@ -385,7 +381,7 @@ func (s *TwoCaptchaSolver) createTask(siteKey, pageURL string) (string, error) {
 		},
 	}
 
-	resp, err := sendRequest(TwoCaptchaCreateEndpoint, payload)
+	resp, err := sendRequest(cfg.CaptchaEndpoints.TwoCaptcha.Create, payload)
 	if err != nil {
 		return "", err
 	}
@@ -421,7 +417,7 @@ func (s *CapsolverSolver) getTaskResult(taskID string) (string, error) {
 			"taskId":    taskID,
 		}
 
-		resp, err := sendRequest(CapsolverResultEndpoint, payload)
+		resp, err := sendRequest(cfg.CaptchaEndpoints.Capsolver.Result, payload)
 		if err != nil {
 			return "", err
 		}
@@ -466,13 +462,17 @@ func (s *CapsolverSolver) getTaskResult(taskID string) (string, error) {
 }
 
 func (s *EZCaptchaSolver) getTaskResult(taskID string) (string, error) {
+	cfg := configuration.Get()
+	MaxRetries := cfg.CaptchaEndpoints.MaxRetries
+	RetryInterval := cfg.CaptchaEndpoints.RetryInterval
+
 	for i := 0; i < MaxRetries; i++ {
 		payload := map[string]interface{}{
 			"clientKey": s.APIKey,
 			"taskId":    taskID,
 		}
 
-		resp, err := sendRequest(EZCaptchaResultEndpoint, payload)
+		resp, err := sendRequest(cfg.CaptchaEndpoints.EZCaptcha.Result, payload)
 		if err != nil {
 			return "", err
 		}
@@ -515,13 +515,17 @@ func (s *EZCaptchaSolver) getTaskResult(taskID string) (string, error) {
 }
 
 func (s *TwoCaptchaSolver) getTaskResult(taskID string) (string, error) {
+	cfg := configuration.Get()
+	MaxRetries := cfg.CaptchaEndpoints.MaxRetries
+	RetryInterval := cfg.CaptchaEndpoints.RetryInterval
+
 	for i := 0; i < MaxRetries; i++ {
 		payload := map[string]interface{}{
 			"clientKey": s.APIKey,
 			"taskId":    taskID,
 		}
 
-		resp, err := sendRequest(TwoCaptchaResultEndpoint, payload)
+		resp, err := sendRequest(cfg.CaptchaEndpoints.TwoCaptcha.Result, payload)
 		if err != nil {
 			return "", err
 		}

@@ -6,11 +6,10 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
@@ -40,10 +39,6 @@ var (
 	proxyManagerMutex sync.RWMutex
 )
 
-func GetDefaultUserAgents() []string {
-	return defaultUserAgents
-}
-
 func GetProxyManager() *ProxyManager {
 	proxyManagerMutex.Lock()
 	defer proxyManagerMutex.Unlock()
@@ -56,20 +51,22 @@ func GetProxyManager() *ProxyManager {
 }
 
 func initializeProxyManager() *ProxyManager {
+	cfg := configuration.Get()
+
 	pm := &ProxyManager{
 		ActiveProxies:      make(map[string]bool),
 		ProxyFailures:      make(map[string]int),
 		ProxyLastUsed:      make(map[string]time.Time),
 		ProxyRateLimits:    make(map[string]time.Time),
 		ProxyClients:       make(map[string]*http.Client),
-		ProxyEnabled:       false,
-		RotationStrategy:   "least-used",
+		ProxyEnabled:       cfg.Proxy.Enabled,
+		RotationStrategy:   cfg.Proxy.RotationStrategy,
 		CurrentProxyIndex:  0,
-		MaxFailures:        3,
-		CooldownPeriod:     10 * time.Minute,
-		ProxyRefreshPeriod: 30 * time.Minute,
+		MaxFailures:        cfg.Proxy.MaxFailures,
+		CooldownPeriod:     cfg.Proxy.CooldownPeriod,
+		ProxyRefreshPeriod: cfg.Proxy.RefreshPeriod,
 		LastRefresh:        time.Now(),
-		UserAgents:         defaultUserAgents,
+		UserAgents:         cfg.Proxy.UserAgents,
 	}
 
 	transport := &http.Transport{
@@ -93,12 +90,12 @@ func initializeProxyManager() *ProxyManager {
 }
 
 func LoadProxyConfiguration(pm *ProxyManager) {
-	proxyList := os.Getenv("HTTP_PROXIES")
-	if proxyList != "" {
-		pm.Proxies = strings.Split(proxyList, ",")
-		for i, proxy := range pm.Proxies {
-			pm.Proxies[i] = strings.TrimSpace(proxy)
-			pm.ActiveProxies[pm.Proxies[i]] = true
+	cfg := configuration.Get()
+
+	if len(cfg.Proxy.Proxies) > 0 {
+		pm.Proxies = cfg.Proxy.Proxies
+		for _, proxy := range pm.Proxies {
+			pm.ActiveProxies[proxy] = true
 		}
 		pm.ProxyEnabled = true
 		logger.Log.Infof("Loaded %d proxies from configuration", len(pm.Proxies))
@@ -107,12 +104,8 @@ func LoadProxyConfiguration(pm *ProxyManager) {
 		logger.Log.Info("No proxies configured, using direct connection")
 	}
 
-	userAgentList := os.Getenv("USER_AGENTS")
-	if userAgentList != "" {
-		pm.UserAgents = strings.Split(userAgentList, ",")
-		for i, ua := range pm.UserAgents {
-			pm.UserAgents[i] = strings.TrimSpace(ua)
-		}
+	if len(cfg.Proxy.UserAgents) > 0 {
+		pm.UserAgents = cfg.Proxy.UserAgents
 		logger.Log.Infof("Loaded %d user agents", len(pm.UserAgents))
 	}
 
@@ -146,11 +139,6 @@ func LoadProxyConfiguration(pm *ProxyManager) {
 }
 
 func (pm *ProxyManager) initializeProxyStats() {
-	if err := database.DB.AutoMigrate(&models.ProxyStats{}); err != nil {
-		logger.Log.WithError(err).Error("Failed to create proxy_stats table")
-		return
-	}
-
 	for proxy := range pm.ActiveProxies {
 		maskedProxy := maskProxyUrl(proxy)
 
@@ -394,12 +382,9 @@ func (pm *ProxyManager) RefreshProxies() {
 		}
 	}
 
-	proxyList := os.Getenv("HTTP_PROXIES")
-	if proxyList != "" {
-		newProxies := strings.Split(proxyList, ",")
-		for i, proxy := range newProxies {
-			newProxies[i] = strings.TrimSpace(proxy)
-		}
+	cfg := configuration.Get()
+	if len(cfg.Proxy.Proxies) > 0 {
+		newProxies := cfg.Proxy.Proxies
 
 		if !sameStringSlice(pm.Proxies, newProxies) {
 			logger.Log.Infof("Proxy list changed, refreshing proxies. Old count: %d, New count: %d",

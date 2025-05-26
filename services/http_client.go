@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/logger"
 )
 
@@ -13,13 +14,6 @@ var (
 	longTimeoutClient  *http.Client
 	clientMutex        sync.RWMutex
 	clientsInitialized bool
-	defaultUserAgents  = []string{
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.2623.71",
-		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-	}
 )
 
 func InitHTTPClients() {
@@ -30,10 +24,11 @@ func InitHTTPClients() {
 		return
 	}
 
+	cfg := configuration.Get()
 	proxyManager := GetProxyManager()
 
-	if proxyManager.ProxyEnabled && len(proxyManager.Proxies) > 0 {
-		logger.Log.Infof("Using proxies for HTTP clients, %d proxies available", len(proxyManager.Proxies))
+	if cfg.Proxy.Enabled && len(cfg.Proxy.Proxies) > 0 {
+		logger.Log.Infof("Using proxies for HTTP clients, %d proxies available", len(cfg.Proxy.Proxies))
 		defaultClient = proxyManager.GetClient()
 
 		longTimeoutClient = &http.Client{
@@ -53,21 +48,14 @@ func InitHTTPClients() {
 			TLSHandshakeTimeout: 10 * time.Second,
 		}
 
-		var userAgents []string
-		if len(proxyManager.UserAgents) > 0 {
-			userAgents = proxyManager.UserAgents
-		} else {
-			userAgents = defaultUserAgents
-		}
-
 		defaultClient = &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: NewHeaderTransport(transport, userAgents),
+			Transport: NewHeaderTransport(transport, cfg.Proxy.UserAgents),
 		}
 
 		longTimeoutClient = &http.Client{
 			Timeout:   60 * time.Second,
-			Transport: NewHeaderTransport(transport, userAgents),
+			Transport: NewHeaderTransport(transport, cfg.Proxy.UserAgents),
 		}
 	}
 
@@ -83,9 +71,10 @@ func GetDefaultHTTPClient() *http.Client {
 		clientMutex.RLock()
 	}
 
-	proxyManager := GetProxyManager()
-	if proxyManager.ProxyEnabled {
+	cfg := configuration.Get()
+	if cfg.Proxy.Enabled {
 		clientMutex.RUnlock()
+		proxyManager := GetProxyManager()
 		return proxyManager.GetClient()
 	}
 
@@ -102,9 +91,10 @@ func GetLongTimeoutHTTPClient() *http.Client {
 		clientMutex.RLock()
 	}
 
-	proxyManager := GetProxyManager()
-	if proxyManager.ProxyEnabled {
+	cfg := configuration.Get()
+	if cfg.Proxy.Enabled {
 		clientMutex.RUnlock()
+		proxyManager := GetProxyManager()
 
 		client := proxyManager.GetClient()
 		return &http.Client{

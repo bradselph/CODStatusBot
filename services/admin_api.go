@@ -20,6 +20,11 @@ var startTime = time.Now()
 func StartAdminAPI() {
 	cfg := configuration.Get()
 
+	if !cfg.Admin.Enabled {
+		logger.Log.Info("Admin API is disabled")
+		return
+	}
+
 	if cfg.Admin.APIKey != "" {
 		allowedAPIKeys = append(allowedAPIKeys, cfg.Admin.APIKey)
 	}

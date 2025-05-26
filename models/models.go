@@ -111,16 +111,16 @@ type ShardInfo struct { // Information about application shards
 	gorm.Model
 	ShardID       int       `gorm:"index"` // The shard ID
 	TotalShards   int       // The total number of shards
-	InstanceID    string    `gorm:"index;uniqueIndex"` // Unique identifier for this instance
-	LastHeartbeat time.Time `gorm:"index"`             // Last time this shard reported as alive
-	Status        string    `gorm:"default:'active'"`  // Status of this shard: active, inactive
-	Stats         string    `gorm:"type:text"`         // JSON encoded stats about this shard
+	InstanceID    string    `gorm:"uniqueIndex"`      // Unique identifier for this instance
+	LastHeartbeat time.Time `gorm:"index"`            // Last time this shard reported as alive
+	Status        string    `gorm:"default:'active'"` // Status of this shard: active, inactive
+	Stats         string    `gorm:"type:text"`        // JSON encoded stats about this shard
 }
 
 type ProxyStats struct { // Statistics about HTTP proxies
 	gorm.Model
-	ProxyURL            string     `gorm:"index;uniqueIndex"` // Masked proxy URL (no credentials)
-	Status              string     `gorm:"default:'active'"`  // Status: active, suspended
+	ProxyURL            string     `gorm:"uniqueIndex"`      // Masked proxy URL (no credentials)
+	Status              string     `gorm:"default:'active'"` // Status: active, suspended
 	SuccessCount        int64      // Number of successful requests
 	FailureCount        int64      // Number of failed requests
 	ConsecutiveFailures int        `gorm:"default:0"` // Current consecutive failures

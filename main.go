@@ -31,7 +31,7 @@ func loadEnv(filename string) error {
 	defer func(file *os.File) {
 		err := file.Close()
 		if err != nil {
-			logger.Log.Errorf("Error closing config file: %v", err)
+			fmt.Printf("Error closing config file: %v\n", err)
 		}
 	}(file)
 
@@ -67,18 +67,18 @@ func loadEnv(filename string) error {
 func main() {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Log.Errorf("Recovered from panic: %v\n%s", r, debug.Stack())
+			fmt.Printf("Recovered from panic: %v\n%s\n", r, debug.Stack())
 		}
 	}()
 
 	if err := run(); err != nil {
-		logger.Log.WithError(err).Error("Bot encountered an error and is shutting down")
-		logger.Log.Fatal("Exiting due to error")
+		fmt.Printf("Bot encountered an error and is shutting down: %v\n", err)
+		os.Exit(1)
 	}
 }
 
 func run() error {
-	logger.Log.Info("Starting COD Status Bot...")
+	fmt.Println("Starting COD Status Bot...")
 
 	if err := loadEnv("config.env"); err != nil {
 		return fmt.Errorf("failed to load environment variables: %w", err)
@@ -87,6 +87,12 @@ func run() error {
 	if err := configuration.Load(); err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+
+	if err := logger.InitializeLogger(); err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
+	logger.Log.Info("Starting COD Status Bot...")
 
 	services.InitHTTPClients()
 	services.InitializeServices()
@@ -178,8 +184,6 @@ func run() error {
 	defer shutdownCancel()
 	done := make(chan struct{})
 	go func() {
-		//TODO: add WaitGroup to track goroutines
-		// wg.Wait()
 		close(done)
 	}()
 
@@ -292,7 +296,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
 	}()
 
 	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
+		ticker := time.NewTicker(cfg.Users.CleanupInterval)
 		defer ticker.Stop()
 
 		for {
@@ -339,5 +343,4 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
 	}()
 
 	logger.Log.Info("Periodic tasks started successfully")
-
 }

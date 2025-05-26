@@ -3,7 +3,6 @@ package database
 import (
 	"errors"
 	"fmt"
-
 	"time"
 
 	"github.com/bradselph/CODStatusBot/configuration"
@@ -76,6 +75,13 @@ func Databaselogin() error {
 		}
 	}
 
+	if DB.Migrator().HasTable("proxy_stats") {
+		logger.Log.Info("Cleaning up proxy_stats table before migrations")
+		if err := DB.Exec("DROP TABLE IF EXISTS proxy_stats").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to drop proxy_stats table")
+		}
+	}
+
 	err = DB.AutoMigrate(
 		&models.Account{},
 		&models.Ban{},
@@ -84,6 +90,8 @@ func Databaselogin() error {
 		&models.Analytics{},
 		&models.BotStatistics{},
 		&models.CommandStatistics{},
+		&models.ProxyStats{},
+		&models.ShardInfo{},
 	)
 	if err != nil {
 		logger.Log.WithError(err).WithField("Bot Startup ", "Database Models Problem ").Error()
