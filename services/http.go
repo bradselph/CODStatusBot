@@ -204,7 +204,8 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 
 	logger.Log.Info("Successfully received reCAPTCHA response")
 
-	checkRequest := fmt.Sprintf("%s?locale=en&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
+	//checkRequest := fmt.Sprintf("%s?locale=en&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
+	checkRequest := fmt.Sprintf("%s?locale=en_US&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
 	logger.Log.WithField("url", checkRequest).Info("Constructed account check request")
 
 	req, err := http.NewRequest("GET", checkRequest, nil)

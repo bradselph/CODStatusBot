@@ -219,6 +219,23 @@ func (asm *AppShardManager) GuildBelongsToInstance(guildID string) bool {
 	return int(targetShard) == asm.ShardID
 }
 
+func (asm *AppShardManager) GetGuildShardID(guildID string) int {
+	asm.RLock()
+	defer asm.RUnlock()
+
+	if asm.TotalShards <= 1 {
+		return 0
+	}
+
+	guildIDInt, err := strconv.ParseUint(guildID, 10, 64)
+	if err != nil {
+		logger.Log.WithError(err).Errorf("Failed to parse guildID %s as uint64", guildID)
+		return -1
+	}
+
+	return int((guildIDInt >> 22) % uint64(asm.TotalShards))
+}
+
 func (asm *AppShardManager) ShardBelongsToInstance(userID string) bool {
 	asm.RLock()
 	defer asm.RUnlock()
@@ -235,6 +252,17 @@ func getUserShard(userID string, totalShards int) int {
 	hash := sha256.Sum256([]byte(userID))
 	val := binary.BigEndian.Uint64(hash[:8])
 	return int(val % uint64(totalShards))
+}
+
+func (asm *AppShardManager) GetUserShardID(userID string) int {
+	asm.RLock()
+	defer asm.RUnlock()
+
+	if asm.TotalShards <= 1 {
+		return 0
+	}
+
+	return getUserShard(userID, asm.TotalShards)
 }
 
 func generateInstanceID() string {
