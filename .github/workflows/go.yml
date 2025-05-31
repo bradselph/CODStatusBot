@@ -1,12 +1,12 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
-name: Go
+name: Go Build (Ubuntu)
 
 on:
   release:
     types: [created]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -18,16 +18,20 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.23.6'
+        go-version: '1.24'
 
-    - name: Build
-      run: go build -o CODStatusBot .
+    - name: Build Binary
+      shell: bash
+      run: |
+        go build -v .
+        BIN_NAME="$(basename "$(find . -maxdepth 1 -type f -executable ! -name '*.exe' | head -n 1)")"
+        echo "BINARY_NAME=$BIN_NAME" >> $GITHUB_ENV
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: CODStatusBot
-        path: ./CODStatusBot
+        name: ${{ env.BINARY_NAME }}
+        path: ./${{ env.BINARY_NAME }}
 
     - name: Upload Release Asset
       if: github.event_name == 'release'
@@ -36,6 +40,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./CODStatusBot
-        asset_name: CODStatusBot
+        asset_path: ./${{ env.BINARY_NAME }}
+        asset_name: ${{ env.BINARY_NAME }}
         asset_content_type: application/octet-stream
