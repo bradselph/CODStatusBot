@@ -24,6 +24,17 @@ type AccountValidationResult struct {
 	ProfileData map[string]interface{}
 }
 
+type BanResponse struct {
+	Error     string `json:"error"`
+	Success   string `json:"success"`
+	CanAppeal bool   `json:"canAppeal"`
+	Bans      []struct {
+		Enforcement string `json:"enforcement"`
+		Title       string `json:"title"`
+		CanAppeal   bool   `json:"canAppeal"`
+	} `json:"bans"`
+}
+
 func init() {
 	cfg := configuration.Get()
 	InitHTTPClients()
@@ -40,7 +51,6 @@ func VerifySSOCookie(ssoCookie string) bool {
 		return false
 	}
 
-	client := GetLongTimeoutHTTPClient()
 	maxRetries := 3
 	var lastError error
 
@@ -58,7 +68,7 @@ func VerifySSOCookie(ssoCookie string) bool {
 		}
 
 		logger.Log.Infof("Sending verification request to: %s (attempt %d/%d)", profileURL, attempt, maxRetries)
-		resp, err := client.Do(req)
+		resp, err := DoRequest(req)
 		if err != nil {
 			lastError = fmt.Errorf("error sending verification request (attempt %d/%d): %w", attempt, maxRetries, err)
 			logger.Log.WithError(err).Error("Error sending verification request")
@@ -117,7 +127,6 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 	var captchaProvider string = ""
 	var captchaCost float64 = 0.0
 
-	// Find accountID based on SSO cookie
 	var account models.Account
 	if result := database.DB.Where("sso_cookie = ?", ssoCookie).First(&account); result.Error == nil {
 		accountID = account.ID
@@ -126,6 +135,10 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 	userSettings, err := GetUserSettings(userID)
 	if err != nil {
 		return models.StatusUnknown, fmt.Errorf("failed to get user settings: %w", err)
+	}
+
+	if err := handleRateLimitCheck(userSettings, "check_endpoint"); err != nil {
+		return models.StatusUnknown, err
 	}
 
 	if !VerifySSOCookie(ssoCookie) {
@@ -191,10 +204,9 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 
 	logger.Log.Info("Successfully received reCAPTCHA response")
 
-	checkRequest := fmt.Sprintf("%s?locale=en&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
+	//checkRequest := fmt.Sprintf("%s?locale=en&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
+	checkRequest := fmt.Sprintf("%s?locale=en_US&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
 	logger.Log.WithField("url", checkRequest).Info("Constructed account check request")
-
-	client := GetLongTimeoutHTTPClient()
 
 	req, err := http.NewRequest("GET", checkRequest, nil)
 	if err != nil {
@@ -218,7 +230,7 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 	backoffDuration := time.Second
 	for i := 0; i < maxRetries; i++ {
 		logger.Log.Infof("Sending request to check account (attempt %d/%d)", i+1, maxRetries)
-		resp, err = client.Do(req)
+		resp, err = DoRequest(req)
 		if err != nil {
 			if i == maxRetries-1 {
 				return models.StatusUnknown, fmt.Errorf("failed to send request after %d attempts: %w", maxRetries, err)
@@ -226,6 +238,11 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 			backoffDuration *= 2
 			time.Sleep(backoffDuration)
 			continue
+		}
+
+		if resp.StatusCode == 429 {
+			updateRateLimitBackoff(userSettings, "check_endpoint")
+			return models.StatusUnknown, fmt.Errorf("rate limited by Activision API")
 		}
 
 		body, err = io.ReadAll(resp.Body)
@@ -273,18 +290,7 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		}
 	}
 
-	var data struct {
-		Error     string `json:"error"`
-		Success   string `json:"success"`
-		CanAppeal bool   `json:"canAppeal"`
-		Bans      []struct {
-			Enforcement string   `json:"enforcement"`
-			Title       string   `json:"title"`
-			CanAppeal   bool     `json:"canAppeal"`
-			Bar         struct{} `json:"bar,omitempty"`
-		} `json:"bans"`
-	}
-
+	var data BanResponse
 	if err := json.Unmarshal(body, &data); err != nil {
 		return models.StatusUnknown, fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -295,10 +301,18 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		return models.StatusUnknown, fmt.Errorf("invalid captcha response")
 	} else if resp.StatusCode == 200 {
 		ReportCapsolverTaskResult(gRecaptchaResponse, true, "")
+		resetRateLimitBackoff(userSettings, "check_endpoint")
 	}
+
+	gameSpecificBans := make(map[string]string)
+	overallStatus := models.StatusGood
+	isRankLocked := false
 
 	if data.Success == "true" && len(data.Bans) == 0 {
 		logger.Log.Info("No bans found, account status is good")
+		account.GameSpecificBans = gameSpecificBans
+		account.IsRankLocked = false
+		database.DB.Save(&account)
 		return models.StatusGood, nil
 	}
 
@@ -306,26 +320,125 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		logger.Log.WithError(err).Error("Failed to update captcha usage")
 	}
 
+	hasCampaignBan := false
+	hasMultiplayerBan := false
+	onlyCampaignBanUnderReview := true
+
 	for _, ban := range data.Bans {
 		logger.Log.WithField("ban", ban).Info("Processing ban")
+
+		gameSpecificBans[ban.Title] = ban.Enforcement
+
+		if strings.Contains(ban.Title, "SP") || strings.Contains(ban.Title, "CAMPAIGN") {
+			hasCampaignBan = true
+			if ban.Enforcement == "UNDER_REVIEW" {
+				isRankLocked = true
+			}
+		} else {
+			if ban.Enforcement == "UNDER_REVIEW" {
+				onlyCampaignBanUnderReview = false
+			}
+		}
+
+		if strings.Contains(ban.Title, "BO6") && !strings.Contains(ban.Title, "SP") {
+			hasMultiplayerBan = true
+		}
+
 		switch ban.Enforcement {
 		case "PERMANENT":
-			logger.Log.Info("Permanent ban detected")
-			return models.StatusPermaban, nil
+			overallStatus = models.StatusPermaban
 		case "UNDER_REVIEW":
-			logger.Log.Info("Shadowban detected")
-			return models.StatusShadowban, nil
+			if overallStatus != models.StatusPermaban {
+				overallStatus = models.StatusShadowban
+			}
 		case "TEMPORARY":
-			logger.Log.Info("Temporary ban detected")
-			return models.StatusTempban, nil
+			if overallStatus != models.StatusPermaban && overallStatus != models.StatusShadowban {
+				overallStatus = models.StatusTempban
+			}
 		}
+	}
+
+	if hasCampaignBan && overallStatus == models.StatusShadowban {
+		if onlyCampaignBanUnderReview {
+			logger.Log.Info("Detected BO6 campaign shadowban case - this is a limited matchmaking mode ban")
+			overallStatus = models.StatusRankLocked
+			isRankLocked = true
+			account.IsCampaignOnlyShadowban = true
+		} else if hasMultiplayerBan {
+			isRankLocked = true
+			if len(gameSpecificBans) == 2 {
+				for title, enforcement := range gameSpecificBans {
+					if enforcement == "UNDER_REVIEW" && strings.Contains(title, "SP") {
+						overallStatus = models.StatusRankLocked
+						break
+					}
+				}
+			}
+		}
+	}
+
+	account.GameSpecificBans = gameSpecificBans
+	account.IsRankLocked = isRankLocked
+
+	if err := database.DB.Save(&account).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to update account with game-specific bans")
 	}
 
 	LogAccountCheck(accountID, userID, "", err == nil,
 		captchaProvider, captchaCost, time.Since(startTime).Milliseconds())
 
-	logger.Log.Info("Unknown account status")
-	return models.StatusUnknown, nil
+	logger.Log.Infof("Account status determined: %s, Rank Locked: %v", overallStatus, isRankLocked)
+	return overallStatus, nil
+}
+
+func handleRateLimitCheck(userSettings models.UserSettings, endpoint string) error {
+	userSettings.EnsureMapsInitialized()
+
+	if lastHit, exists := userSettings.LastRateLimitHit[endpoint]; exists {
+		backoffMultiplier := userSettings.RateLimitBackoff[endpoint]
+		if backoffMultiplier == 0 {
+			backoffMultiplier = 1
+		}
+
+		backoffDuration := time.Duration(backoffMultiplier) * time.Minute
+
+		if time.Since(lastHit) < backoffDuration {
+			remainingTime := backoffDuration - time.Since(lastHit)
+			return fmt.Errorf("rate limited - please wait %v before trying again", remainingTime.Round(time.Second))
+		}
+	}
+
+	return nil
+}
+
+func updateRateLimitBackoff(userSettings models.UserSettings, endpoint string) {
+	userSettings.EnsureMapsInitialized()
+
+	userSettings.LastRateLimitHit[endpoint] = time.Now()
+
+	currentBackoff := userSettings.RateLimitBackoff[endpoint]
+	if currentBackoff == 0 {
+		currentBackoff = 1
+	} else if currentBackoff < 32 {
+		currentBackoff *= 2
+	}
+
+	userSettings.RateLimitBackoff[endpoint] = currentBackoff
+
+	if err := database.DB.Save(userSettings).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to update rate limit backoff")
+	}
+}
+
+func resetRateLimitBackoff(userSettings models.UserSettings, endpoint string) {
+	userSettings.EnsureMapsInitialized()
+
+	delete(userSettings.RateLimitBackoff, endpoint)
+	delete(userSettings.LastRateLimitHit, endpoint)
+
+	if err := database.DB.Save(userSettings).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to reset rate limit backoff")
+	}
 }
 
 func UpdateCaptchaUsage(userID string) error {
@@ -374,8 +487,6 @@ func CheckAccountAge(ssoCookie string) (int, int, int, int64, error) {
 	logger.Log.Info("Starting CheckAccountAge function")
 	cfg := configuration.Get()
 
-	client := GetDefaultHTTPClient()
-
 	req, err := http.NewRequest("GET", cfg.API.ProfileEndpoint, nil)
 	if err != nil {
 		return 0, 0, 0, 0, errors.New("failed to create HTTP request to check account age")
@@ -385,7 +496,7 @@ func CheckAccountAge(ssoCookie string) (int, int, int, int64, error) {
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := DoRequest(req)
 	if err != nil {
 		return 0, 0, 0, 0, errors.New("failed to send HTTP request to check account age")
 	}
@@ -428,8 +539,6 @@ func CheckVIPStatus(ssoCookie string) (bool, error) {
 	cfg := configuration.Get()
 	logger.Log.Info("Checking VIP status")
 
-	client := GetDefaultHTTPClient()
-
 	req, err := http.NewRequest("GET", cfg.API.CheckVIPEndpoint+ssoCookie, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create HTTP request to check VIP status: %w", err)
@@ -439,7 +548,7 @@ func CheckVIPStatus(ssoCookie string) (bool, error) {
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := DoRequest(req)
 	if err != nil {
 		return false, fmt.Errorf("failed to send HTTP request to check VIP status: %w", err)
 	}
@@ -476,8 +585,6 @@ func CheckVIPStatus(ssoCookie string) (bool, error) {
 func ValidateAndGetAccountInfo(ssoCookie string) (*AccountValidationResult, error) {
 	cfg := configuration.Get()
 
-	client := GetDefaultHTTPClient()
-
 	req, err := http.NewRequest("GET", cfg.API.ProfileEndpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create profile request: %w", err)
@@ -488,7 +595,7 @@ func ValidateAndGetAccountInfo(ssoCookie string) (*AccountValidationResult, erro
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := DoRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send profile request: %w", err)
 	}

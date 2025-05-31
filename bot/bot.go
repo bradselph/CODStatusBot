@@ -15,12 +15,14 @@ import (
 	"github.com/bradselph/CODStatusBot/command/removeaccount"
 	"github.com/bradselph/CODStatusBot/command/setcaptchaservice"
 	"github.com/bradselph/CODStatusBot/command/setcheckinterval"
+	"github.com/bradselph/CODStatusBot/command/setephemeral"
 	"github.com/bradselph/CODStatusBot/command/setnotifications"
 	"github.com/bradselph/CODStatusBot/command/togglecheck"
 	"github.com/bradselph/CODStatusBot/command/updateaccount"
 	"github.com/bradselph/CODStatusBot/command/verdansk"
 	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/services"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -38,6 +40,13 @@ func StartBot() (*discordgo.Session, error) {
 	discord, err = discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.Sharding.Enabled {
+		discord.ShardID = cfg.Sharding.ShardID
+		discord.ShardCount = cfg.Sharding.TotalShards
+		logger.Log.Infof("Configured Discord gateway sharding: Shard %d of %d",
+			discord.ShardID, discord.ShardCount)
 	}
 
 	discord.Identify.Intents = discordgo.IntentsGuildMessages |
@@ -58,6 +67,27 @@ func StartBot() (*discordgo.Session, error) {
 	logger.Log.Info("Registering global commands")
 
 	discord.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		if i.GuildID != "" {
+			appShardManager := services.GetAppShardManager()
+			if !appShardManager.GuildBelongsToInstance(i.GuildID) {
+				assignedShard := appShardManager.GetGuildShardID(i.GuildID)
+				logger.Log.Debugf("Skipping interaction in guild %s (assigned to shard %d, this is shard %d)",
+					i.GuildID, assignedShard, appShardManager.ShardID)
+				return
+			}
+		} else {
+			userID := getUserIDFromInteraction(i)
+			if userID != "" {
+				appShardManager := services.GetAppShardManager()
+				if !appShardManager.ShardBelongsToInstance(userID) {
+					assignedShard := appShardManager.GetUserShardID(userID)
+					logger.Log.Debugf("Skipping direct message interaction from user %s (assigned to shard %d, this is shard %d)",
+						userID, assignedShard, appShardManager.ShardID)
+					return
+				}
+			}
+		}
+
 		installationType := getInstallationType(i)
 		logger.Log.Infof("Handling interaction in context: %s", installationType)
 
@@ -76,9 +106,27 @@ func StartBot() (*discordgo.Session, error) {
 			return
 		}
 
+		if m.GuildID != "" {
+			appShardManager := services.GetAppShardManager()
+			if !appShardManager.GuildBelongsToInstance(m.GuildID) {
+				assignedShard := appShardManager.GetGuildShardID(m.GuildID)
+				logger.Log.Debugf("Skipping message in guild %s (assigned to shard %d, this is shard %d)",
+					m.GuildID, assignedShard, appShardManager.ShardID)
+				return
+			}
+		} else {
+			appShardManager := services.GetAppShardManager()
+			if !appShardManager.ShardBelongsToInstance(m.Author.ID) {
+				assignedShard := appShardManager.GetUserShardID(m.Author.ID)
+				logger.Log.Debugf("Skipping direct message from user %s (assigned to shard %d, this is shard %d)",
+					m.Author.ID, assignedShard, appShardManager.ShardID)
+				return
+			}
+		}
+
 		channel, err := s.Channel(m.ChannelID)
 		if err == nil && channel.Type == discordgo.ChannelTypeDM {
-			logger.Log.Infof("Received DM from user %s: %s", m.Author.Username, m.Content)
+			logger.Log.Infof("Received DM from user %s (assigned to this shard): %s", m.Author.Username, m.Content)
 		}
 	})
 
@@ -90,6 +138,16 @@ func getInstallationType(i *discordgo.InteractionCreate) string {
 		return "server"
 	}
 	return "direct"
+}
+
+func getUserIDFromInteraction(i *discordgo.InteractionCreate) string {
+	var userID string
+	if i.Member != nil && i.Member.User != nil {
+		userID = i.Member.User.ID
+	} else if i.User != nil {
+		userID = i.User.ID
+	}
+	return userID
 }
 
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -126,6 +184,8 @@ func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate
 		setcaptchaservice.HandleCaptchaServiceSelection(s, i)
 	case strings.HasPrefix(customID, "feedback_"):
 		feedback.HandleFeedbackChoice(s, i)
+	case strings.HasPrefix(customID, "set_ephemeral_"):
+		setephemeral.HandleEphemeralSelection(s, i)
 	case strings.HasPrefix(customID, "account_age_"):
 		accountage.HandleAccountSelection(s, i)
 	case strings.HasPrefix(customID, "account_logs_"):

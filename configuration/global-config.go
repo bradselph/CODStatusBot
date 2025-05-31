@@ -21,7 +21,13 @@ type Config struct {
 		RetentionDays  int
 	}
 
-	// Database Performance
+	Sharding struct {
+		Enabled      bool
+		ShardID      int
+		TotalShards  int
+		HeartbeatSec int
+	}
+
 	Performance struct {
 		DbMaxIdleConns int `json:"db_max_idle_conns"`
 		DbMaxOpenConns int `json:"db_max_open_conns"`
@@ -47,6 +53,23 @@ type Config struct {
 		DeveloperID string
 		ClientID    string
 		PublicKey   string
+	}
+
+	// Proxy Configuration
+	Proxy struct {
+		Enabled          bool
+		Proxies          []string
+		MaxFailures      int
+		CooldownPeriod   time.Duration
+		RefreshPeriod    time.Duration
+		RotationStrategy string
+		UserAgents       []string
+	}
+
+	// Rate Limiting Settings
+	RateLimit struct {
+		GlobalWindow time.Duration
+		APIWindow    time.Duration
 	}
 
 	// Captcha Service Settings
@@ -78,8 +101,9 @@ type Config struct {
 
 	CaptchaEndpoints struct {
 		Capsolver struct {
-			Create string
-			Result string
+			Create   string
+			Result   string
+			Feedback string
 		}
 		EZCaptcha struct {
 			Create string
@@ -95,10 +119,11 @@ type Config struct {
 
 	// API Endpoints
 	API struct {
-		CheckEndpoint      string
-		ProfileEndpoint    string
-		CheckVIPEndpoint   string
-		RedeemCodeEndpoint string
+		CheckEndpoint           string
+		ProfileEndpoint         string
+		CheckVIPEndpoint        string
+		DetailedProfileEndpoint string
+		RedeemCodeEndpoint      string
 	}
 
 	// Rate Limits and Intervals
@@ -127,6 +152,7 @@ type Config struct {
 		MaxMessageFailures     int
 		InactiveUserPeriod     time.Duration
 		UnreachableResetPeriod time.Duration
+		CleanupInterval        time.Duration
 	}
 
 	// Verdansk Stats Settings
@@ -136,8 +162,8 @@ type Config struct {
 		APIKey              string
 		TempDir             string
 		CleanupTime         time.Duration
-		CommandCooldown     time.Duration // Cooldown between commands per user
-		MaxRequestsPerDay   int           // Maximum requests per day per user
+		CommandCooldown     time.Duration
+		MaxRequestsPerDay   int
 	}
 
 	// Notification Settings
@@ -158,6 +184,13 @@ type Config struct {
 		InfoCircle     string
 		StopWatch      string
 		QuestionCircle string
+	}
+
+	// Sentry Settings
+	Sentry struct {
+		DSN              string
+		TracesSampleRate float64
+		Debug            bool
 	}
 }
 
@@ -197,6 +230,10 @@ func Load() error {
 	loadEmojiConfig()
 	loadPerformanceConfig()
 	loadVerdanskConfig()
+	loadShardingConfig()
+	loadProxyConfig()
+	loadRateLimitConfig()
+	loadSentryConfig()
 
 	if err := validate(); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
@@ -222,6 +259,7 @@ func loadUserSettings() {
 	AppConfig.Users.InactiveUserPeriod = time.Duration(inactiveDays) * 24 * time.Hour
 	unreachableDays := getEnvAsInt("UNREACHABLE_RESET_DAYS", 30)
 	AppConfig.Users.UnreachableResetPeriod = time.Duration(unreachableDays) * 24 * time.Hour
+	AppConfig.Users.CleanupInterval = time.Duration(getEnvAsInt("USER_CLEANUP_INTERVAL_HOURS", 24)) * time.Hour
 }
 
 func loadNotificationSettings() {
@@ -244,8 +282,8 @@ func loadCaptchaConfig() {
 	AppConfig.CaptchaService.Capsolver.ClientKey = os.Getenv("CAPSOLVER_CLIENT_KEY")
 	AppConfig.CaptchaService.Capsolver.AppID = os.Getenv("CAPSOLVER_APP_ID")
 	AppConfig.CaptchaService.Capsolver.BalanceMin = getEnvAsFloat("CAPSOLVER_BALANCE_MIN", 0.10)
-	AppConfig.CaptchaService.Capsolver.MaxRetries = getEnvAsInt("CAPSOLVER_MAX_RETRIES", 6)                                     // TODO: Merge with MAX_RETRIES
-	AppConfig.CaptchaService.Capsolver.RetryInterval = time.Duration(getEnvAsInt("CAPSOLVER_RETRY_INTERVAL", 10)) * time.Second // TODO: Merge with RETRY_INTERVAL
+	AppConfig.CaptchaService.Capsolver.MaxRetries = getEnvAsInt("CAPSOLVER_MAX_RETRIES", 6)
+	AppConfig.CaptchaService.Capsolver.RetryInterval = time.Duration(getEnvAsInt("CAPSOLVER_RETRY_INTERVAL", 10)) * time.Second
 
 	// EZCaptcha
 	AppConfig.CaptchaService.EZCaptcha.Enabled = os.Getenv("EZCAPTCHA_ENABLED") == "true"
@@ -262,12 +300,27 @@ func loadCaptchaConfig() {
 	AppConfig.CaptchaService.RecaptchaSiteKey = os.Getenv("RECAPTCHA_SITE_KEY")
 	AppConfig.CaptchaService.RecaptchaURL = os.Getenv("RECAPTCHA_URL")
 	AppConfig.CaptchaService.MaxRetries = getEnvAsInt("MAX_RETRIES", 3)
+
+	// Captcha Endpoints
+	AppConfig.CaptchaEndpoints.Capsolver.Create = getEnvWithDefault("CAPSOLVER_CREATE_ENDPOINT", "https://api.capsolver.com/createTask")
+	AppConfig.CaptchaEndpoints.Capsolver.Result = getEnvWithDefault("CAPSOLVER_RESULT_ENDPOINT", "https://api.capsolver.com/getTaskResult")
+	AppConfig.CaptchaEndpoints.Capsolver.Feedback = getEnvWithDefault("CAPSOLVER_FEEDBACK_ENDPOINT", "https://api.capsolver.com/feedbackTask")
+
+	AppConfig.CaptchaEndpoints.EZCaptcha.Create = getEnvWithDefault("EZCAPTCHA_CREATE_ENDPOINT", "https://api.ez-captcha.com/createTask")
+	AppConfig.CaptchaEndpoints.EZCaptcha.Result = getEnvWithDefault("EZCAPTCHA_RESULT_ENDPOINT", "https://api.ez-captcha.com/getTaskResult")
+
+	AppConfig.CaptchaEndpoints.TwoCaptcha.Create = getEnvWithDefault("TWOCAPTCHA_CREATE_ENDPOINT", "https://api.2captcha.com/createTask")
+	AppConfig.CaptchaEndpoints.TwoCaptcha.Result = getEnvWithDefault("TWOCAPTCHA_RESULT_ENDPOINT", "https://api.2captcha.com/getTaskResult")
+
+	AppConfig.CaptchaEndpoints.MaxRetries = getEnvAsInt("CAPTCHA_ENDPOINT_MAX_RETRIES", 6)
+	AppConfig.CaptchaEndpoints.RetryInterval = time.Duration(getEnvAsInt("CAPTCHA_ENDPOINT_RETRY_INTERVAL", 10)) * time.Second
 }
 
 func loadAPIEndpoints() {
 	AppConfig.API.CheckEndpoint = os.Getenv("CHECK_ENDPOINT")
 	AppConfig.API.ProfileEndpoint = os.Getenv("PROFILE_ENDPOINT")
 	AppConfig.API.CheckVIPEndpoint = os.Getenv("CHECK_VIP_ENDPOINT")
+	AppConfig.API.DetailedProfileEndpoint = os.Getenv("DETAILED_PROFILE_ENDPOINT")
 	AppConfig.API.RedeemCodeEndpoint = os.Getenv("REDEEM_CODE_ENDPOINT")
 }
 
@@ -301,6 +354,51 @@ func loadEmojiConfig() {
 func loadPerformanceConfig() {
 	AppConfig.Performance.DbMaxIdleConns = getEnvAsInt("DB_MAX_IDLE_CONNS", 10)
 	AppConfig.Performance.DbMaxOpenConns = getEnvAsInt("DB_MAX_OPEN_CONNS", 100)
+}
+
+func loadProxyConfig() {
+	proxyList := os.Getenv("HTTP_PROXIES")
+	if proxyList != "" {
+		AppConfig.Proxy.Proxies = strings.Split(proxyList, ",")
+		for i, proxy := range AppConfig.Proxy.Proxies {
+			AppConfig.Proxy.Proxies[i] = strings.TrimSpace(proxy)
+		}
+		AppConfig.Proxy.Enabled = true
+	} else {
+		AppConfig.Proxy.Enabled = false
+	}
+
+	AppConfig.Proxy.MaxFailures = getEnvAsInt("PROXY_MAX_FAILURES", 3)
+	AppConfig.Proxy.CooldownPeriod = time.Duration(getEnvAsInt("PROXY_COOLDOWN_MINUTES", 10)) * time.Minute
+	AppConfig.Proxy.RefreshPeriod = time.Duration(getEnvAsInt("PROXY_REFRESH_MINUTES", 30)) * time.Minute
+	AppConfig.Proxy.RotationStrategy = getEnvWithDefault("PROXY_ROTATION_STRATEGY", "least-used")
+
+	userAgentList := os.Getenv("USER_AGENTS")
+	if userAgentList != "" {
+		AppConfig.Proxy.UserAgents = strings.Split(userAgentList, ",")
+		for i, ua := range AppConfig.Proxy.UserAgents {
+			AppConfig.Proxy.UserAgents[i] = strings.TrimSpace(ua)
+		}
+	} else {
+		AppConfig.Proxy.UserAgents = []string{
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.2623.71",
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+		}
+	}
+}
+
+func loadRateLimitConfig() {
+	AppConfig.RateLimit.GlobalWindow = time.Duration(getEnvAsInt("GLOBAL_RATE_LIMIT_WINDOW", 60)) * time.Second
+	AppConfig.RateLimit.APIWindow = time.Duration(getEnvAsInt("API_RATE_LIMIT_WINDOW", 10)) * time.Second
+}
+
+func loadSentryConfig() {
+	AppConfig.Sentry.DSN = os.Getenv("SENTRY_DSN")
+	AppConfig.Sentry.TracesSampleRate = getEnvAsFloat("SENTRY_TRACES_SAMPLE_RATE", 1.0)
+	AppConfig.Sentry.Debug = getEnvAsBool("SENTRY_DEBUG", false)
 }
 
 func validate() error {
@@ -351,7 +449,9 @@ func validate() error {
 	}
 	return nil
 }
+
 func logConfigurationValues() {
+	logger.Log.Infof("Loaded configuration - Environment: %s", AppConfig.Environment)
 	logger.Log.Infof("Loaded rate limits and intervals: CHECK_INTERVAL=%d, NOTIFICATION_INTERVAL=%.2f, "+
 		"COOLDOWN_DURATION=%.2f, SLEEP_DURATION=%d, COOKIE_CHECK_INTERVAL_PERMABAN=%.2f, "+
 		"STATUS_CHANGE_COOLDOWN=%.2f, GLOBAL_NOTIFICATION_COOLDOWN=%.2f, COOKIE_EXPIRATION_WARNING=%.2f, "+
@@ -391,6 +491,17 @@ func logConfigurationValues() {
 		AppConfig.Admin.StatsRateLimit,
 		AppConfig.Admin.RetentionDays)
 
+	// Log proxy settings
+	if AppConfig.Proxy.Enabled {
+		logger.Log.Infof("Loaded proxy settings: ENABLED=%v, PROXIES=%d, STRATEGY=%s, MAX_FAILURES=%d",
+			AppConfig.Proxy.Enabled,
+			len(AppConfig.Proxy.Proxies),
+			AppConfig.Proxy.RotationStrategy,
+			AppConfig.Proxy.MaxFailures)
+	} else {
+		logger.Log.Info("Proxy configuration: DISABLED")
+	}
+
 	// Log enabled captcha services
 	var enabledServices []string
 	if AppConfig.CaptchaService.Capsolver.Enabled {
@@ -411,6 +522,12 @@ func logConfigurationValues() {
 
 	if AppConfig.Discord.ClientID != "" {
 		logger.Log.Info("OAuth2 configuration loaded successfully")
+	}
+
+	if AppConfig.Sharding.Enabled {
+		logger.Log.Infof("Sharding configuration: ENABLED - Shard %d of %d", AppConfig.Sharding.ShardID, AppConfig.Sharding.TotalShards)
+	} else {
+		logger.Log.Info("Sharding configuration: DISABLED")
 	}
 }
 
@@ -481,4 +598,29 @@ func loadVerdanskConfig() {
 	AppConfig.Verdansk.CleanupTime = time.Duration(getEnvAsInt("VERDANSK_CLEANUP_MINUTES", 30)) * time.Minute
 	AppConfig.Verdansk.CommandCooldown = time.Duration(getEnvAsInt("VERDANSK_COMMAND_COOLDOWN_MINUTES", 60)) * time.Minute
 	AppConfig.Verdansk.MaxRequestsPerDay = getEnvAsInt("VERDANSK_MAX_REQUESTS_PER_DAY", 3)
+}
+
+func loadShardingConfig() {
+	AppConfig.Sharding.Enabled = getEnvAsBool("SHARDING_ENABLED", false)
+	AppConfig.Sharding.ShardID = getEnvAsInt("SHARD_ID", 0)
+	AppConfig.Sharding.TotalShards = getEnvAsInt("TOTAL_SHARDS", 1)
+	AppConfig.Sharding.HeartbeatSec = getEnvAsInt("SHARD_HEARTBEAT_SEC", 30)
+
+	if AppConfig.Sharding.Enabled {
+		if AppConfig.Sharding.TotalShards < 1 {
+			logger.Log.Warn("Invalid TOTAL_SHARDS value, must be at least 1. Setting to 1.")
+			AppConfig.Sharding.TotalShards = 1
+		}
+
+		if AppConfig.Sharding.ShardID < 0 || AppConfig.Sharding.ShardID >= AppConfig.Sharding.TotalShards {
+			logger.Log.Warnf("Invalid SHARD_ID %d for TOTAL_SHARDS %d. Setting to 0.",
+				AppConfig.Sharding.ShardID, AppConfig.Sharding.TotalShards)
+			AppConfig.Sharding.ShardID = 0
+		}
+
+		logger.Log.Infof("Sharding enabled: This is shard %d of %d",
+			AppConfig.Sharding.ShardID, AppConfig.Sharding.TotalShards)
+	} else {
+		logger.Log.Info("Sharding disabled: Running in single instance mode")
+	}
 }

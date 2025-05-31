@@ -31,14 +31,14 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	userID, err := getUserID(i)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to get user ID")
-		respondToInteraction(s, i, "An error occurred while processing your request.")
+		respondToInteraction(s, i, "An error occurred while processing your request.", true)
 		return
 	}
 
 	userSettings, err := services.GetUserSettings(userID)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error fetching user settings")
-		respondToInteraction(s, i, "Error fetching user settings. Please try again later.")
+		respondToInteraction(s, i, "Error fetching user settings. Please try again later.", true)
 		return
 	}
 
@@ -51,13 +51,15 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		} else {
 			msg += "No captcha services are currently available. Please try again later."
 		}
-		respondToInteraction(s, i, msg)
+		respondToInteraction(s, i, msg, true)
 		return
 	}
 
-	if userSettings.CapSolverAPIKey != "" && userSettings.EZCaptchaAPIKey == "" && userSettings.TwoCaptchaAPIKey == "" {
+	isUsingDefaultKey := userSettings.CapSolverAPIKey == "" && userSettings.EZCaptchaAPIKey == "" && userSettings.TwoCaptchaAPIKey == ""
+
+	if isUsingDefaultKey {
 		if !checkRateLimit(userID) {
-			respondToInteraction(s, i, fmt.Sprintf("You're using the bot's default API key and are rate limited. Please wait %v before trying again, or set up your own API key using /setcaptchaservice for unlimited checks.", rateLimit))
+			respondToInteraction(s, i, fmt.Sprintf("You're using the bot's default API key and are rate limited. Please wait %v before trying again, or set up your own API key using /setcaptchaservice for unlimited checks.", rateLimit), true)
 			return
 		}
 	}
@@ -66,12 +68,12 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		_, balance, err := services.GetUserCaptchaKey(userID)
 		if err != nil {
 			logger.Log.WithError(err).Error("Error getting captcha key")
-			respondToInteraction(s, i, "Error validating your captcha API key. Please check your key using /setcaptchaservice.")
+			respondToInteraction(s, i, "Error validating your captcha API key. Please check your key using /setcaptchaservice.", true)
 			return
 		}
 
 		if balance < 0 {
-			respondToInteraction(s, i, fmt.Sprintf("Your captcha balance (%.2f) is too low for checking accounts. Please recharge your balance.", balance))
+			respondToInteraction(s, i, fmt.Sprintf("Your captcha balance (%.2f) is too low for checking accounts. Please recharge your balance.", balance), true)
 			return
 		}
 	}
@@ -82,23 +84,23 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	if result.Error != nil {
 		logger.Log.WithError(result.Error).Error("Error fetching accounts")
-		respondToInteraction(s, i, "Error fetching accounts. Please try again later.")
+		respondToInteraction(s, i, "Error fetching accounts. Please try again later.", true)
 		return
 	}
 
 	if len(accounts) == 0 {
-		respondToInteraction(s, i, "You don't have any monitored accounts.")
+		respondToInteraction(s, i, "You don't have any monitored accounts.", true)
 		return
 	}
 
-	showAccountButtons(s, i, accounts)
+	showAccountButtons(s, i, accounts, userSettings)
 }
 
-func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, accounts []models.Account) {
+func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, accounts []models.Account, userSettings models.UserSettings) {
 	userID, err := getUserID(i)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to get user ID")
-		respondToInteraction(s, i, "An error occurred while processing your request.")
+		respondToInteraction(s, i, "An error occurred while processing your request.", true)
 		return
 	}
 
@@ -130,11 +132,16 @@ func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, ac
 		components = append(components, discordgo.ActionsRow{Components: currentRow})
 	}
 
+	flags := discordgo.MessageFlags(0)
+	if userSettings.PreferEphemeralResponses {
+		flags = discordgo.MessageFlagsEphemeral
+	}
+
 	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content:    "Select an account to check, or 'Check All' to check all accounts:",
-			Flags:      discordgo.MessageFlagsEphemeral,
+			Flags:      flags,
 			Components: components,
 		},
 	})
@@ -149,7 +156,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 
 	if len(parts) != 4 {
 		logger.Log.Error("Invalid custom ID format")
-		respondToInteraction(s, i, "An error occurred while processing your request.")
+		respondToInteraction(s, i, "An error occurred while processing your request.", true)
 		return
 	}
 
@@ -159,7 +166,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 	userSettings, err := services.GetUserSettings(userID)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error fetching user settings")
-		respondToInteraction(s, i, "Error fetching settings. Please try again.")
+		respondToInteraction(s, i, "Error fetching settings. Please try again.", true)
 		return
 	}
 
@@ -188,7 +195,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 			var accountCount int64
 			if err := database.DB.Model(&models.Account{}).Where("user_id = ?", userID).Count(&accountCount).Error; err != nil {
 				logger.Log.WithError(err).Error("Error counting accounts")
-				respondToInteraction(s, i, "Error counting accounts. Please try again.")
+				respondToInteraction(s, i, "Error counting accounts. Please try again.", true)
 				return
 			}
 
@@ -215,7 +222,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 					},
 					Timestamp: time.Now().Format(time.RFC3339),
 				}
-				respondToInteractionWithEmbed(s, i, "", embed)
+				respondToInteractionWithEmbed(s, i, "", embed, userSettings.PreferEphemeralResponses)
 				return
 			}
 
@@ -244,7 +251,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 					},
 					Timestamp: time.Now().Format(time.RFC3339),
 				}
-				respondToInteractionWithEmbed(s, i, "", embed)
+				respondToInteractionWithEmbed(s, i, "", embed, userSettings.PreferEphemeralResponses)
 				return
 			}
 			userSettings.ActionCounts["check_now"]++
@@ -252,19 +259,19 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 
 		if err := database.DB.Save(&userSettings).Error; err != nil {
 			logger.Log.WithError(err).Error("Error saving check count")
-			respondToInteraction(s, i, "Error updating check count. Please try again.")
+			respondToInteraction(s, i, "Error updating check count. Please try again.", true)
 			return
 		}
 	} else {
 		apiKey, balance, err := services.GetUserCaptchaKey(userID)
 		if err != nil || apiKey == "" {
 			logger.Log.WithError(err).Error("Error getting captcha key")
-			respondToInteraction(s, i, "Error validating your captcha API key. Please check your key using /setcaptchaservice.")
+			respondToInteraction(s, i, "Error validating your captcha API key. Please check your key using /setcaptchaservice.", true)
 			return
 		}
 
 		if balance < 0 {
-			respondToInteraction(s, i, fmt.Sprintf("Your captcha balance (%.2f) is too low for checking accounts. Please recharge your balance.", balance))
+			respondToInteraction(s, i, fmt.Sprintf("Your captcha balance (%.2f) is too low for checking accounts. Please recharge your balance.", balance), true)
 			return
 		}
 	}
@@ -274,14 +281,14 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 		result := database.DB.Where("user_id = ?", userID).Find(&accounts)
 		if result.Error != nil {
 			logger.Log.WithError(result.Error).Error("Error fetching accounts")
-			respondToInteraction(s, i, "Error fetching accounts. Please try again later.")
+			respondToInteraction(s, i, "Error fetching accounts. Please try again later.", true)
 			return
 		}
 	} else {
 		accountID, err := strconv.Atoi(accountIDOrAll)
 		if err != nil {
 			logger.Log.WithError(err).Error("Error parsing account ID")
-			respondToInteraction(s, i, "Error processing your selection. Please try again.")
+			respondToInteraction(s, i, "Error processing your selection. Please try again.", true)
 			return
 		}
 
@@ -289,14 +296,14 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 		result := database.DB.First(&account, accountID)
 		if result.Error != nil {
 			logger.Log.WithError(result.Error).Error("Error fetching account")
-			respondToInteraction(s, i, "Error: Account not found or you don't have permission to check it.")
+			respondToInteraction(s, i, "Error: Account not found or you don't have permission to check it.", true)
 			return
 		}
 
 		accounts = append(accounts, account)
 	}
 
-	checkAccounts(s, i, accounts)
+	checkAccounts(s, i, accounts, userSettings)
 }
 
 func formatDuration(d time.Duration) string {
@@ -316,9 +323,11 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
-func respondToInteractionWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embed *discordgo.MessageEmbed) {
-	responseData := &discordgo.InteractionResponseData{
-		Flags: discordgo.MessageFlagsEphemeral,
+func respondToInteractionWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embed *discordgo.MessageEmbed, ephemeral bool) {
+	responseData := &discordgo.InteractionResponseData{}
+
+	if ephemeral {
+		responseData.Flags = discordgo.MessageFlagsEphemeral
 	}
 
 	if content != "" {
@@ -337,25 +346,23 @@ func respondToInteractionWithEmbed(s *discordgo.Session, i *discordgo.Interactio
 	}
 }
 
-func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, accounts []models.Account) {
+func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, accounts []models.Account, userSettings models.UserSettings) {
 	userID, err := services.GetUserID(i)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to get user ID")
-		respondToInteraction(s, i, "An error occurred while processing your request.")
+		respondToInteraction(s, i, "An error occurred while processing your request.", true)
 		return
 	}
 
-	userSettings, err := services.GetUserSettings(userID)
-	if err != nil {
-		logger.Log.WithError(err).Error("Error fetching user settings")
-		respondToInteraction(s, i, "Error fetching settings. Please try again.")
-		return
+	flags := discordgo.MessageFlags(0)
+	if userSettings.PreferEphemeralResponses {
+		flags = discordgo.MessageFlagsEphemeral
 	}
 
 	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
+			Flags: flags,
 		},
 	})
 	if err != nil {
@@ -365,7 +372,7 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 
 	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 		Content: fmt.Sprintf("Starting check of %d accounts...", len(accounts)),
-		Flags:   discordgo.MessageFlagsEphemeral,
+		Flags:   flags,
 	})
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to send initial status message")
@@ -403,6 +410,8 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 					description += "Your captcha balance is too low. Please recharge your balance."
 				} else if strings.Contains(err.Error(), "invalid captcha") {
 					description += "There was an issue with your captcha API key. Please verify it using /setcaptchaservice."
+				} else if strings.Contains(err.Error(), "rate limited") {
+					description += "The service is temporarily rate limited. Please try again later."
 				} else {
 					description += "Please try again later."
 				}
@@ -414,27 +423,19 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 					Timestamp:   time.Now().Format(time.RFC3339),
 				}
 			} else {
-				services.HandleStatusChange(s, account, result, userSettings)
-
-				embed = &discordgo.MessageEmbed{
-					Title:       fmt.Sprintf("%s - Status Check", account.Title),
-					Description: fmt.Sprintf("Current status: %s", result),
-					Color:       services.GetColorForStatus(result, account.IsExpiredCookie, account.IsCheckDisabled),
-					Fields: []*discordgo.MessageEmbedField{
-						{
-							Name:   "Last Checked",
-							Value:  time.Now().Format(time.RFC1123),
-							Inline: true,
-						},
-					},
-					Timestamp: time.Now().Format(time.RFC3339),
+				var latestAccount models.Account
+				if err := database.DB.First(&latestAccount, account.ID).Error; err == nil {
+					account = latestAccount
 				}
+
+				services.HandleStatusChange(s, account, result, &userSettings)
+				embed = services.CreateCheckResultEmbed(account, result, userSettings)
 			}
 		}
 
 		_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Embeds: []*discordgo.MessageEmbed{embed},
-			Flags:  discordgo.MessageFlagsEphemeral,
+			Flags:  flags,
 		})
 		if err != nil {
 			logger.Log.WithError(err).Error("Failed to send follow-up message")
@@ -447,7 +448,7 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 	completionMessage := fmt.Sprintf("Completed checking all %d accounts.", processedCount)
 	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 		Content: completionMessage,
-		Flags:   discordgo.MessageFlagsEphemeral,
+		Flags:   flags,
 	})
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to send completion message")
@@ -497,12 +498,23 @@ func getUserID(i *discordgo.InteractionCreate) (string, error) {
 	return "", fmt.Errorf("unable to determine user ID")
 }
 
-func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
+func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string, forceEphemeral bool) {
+	flags := discordgo.MessageFlags(0)
+	if forceEphemeral {
+		flags = discordgo.MessageFlagsEphemeral
+	} else {
+		if userID, err := getUserID(i); err == nil {
+			if userSettings, err := services.GetUserSettings(userID); err == nil && userSettings.PreferEphemeralResponses {
+				flags = discordgo.MessageFlagsEphemeral
+			}
+		}
+	}
+
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: message,
-			Flags:   discordgo.MessageFlagsEphemeral,
+			Flags:   flags,
 		},
 	})
 	if err != nil {

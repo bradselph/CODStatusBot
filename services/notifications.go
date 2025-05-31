@@ -15,6 +15,35 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+func formatVIPStatus(isVIP bool) string {
+	if isVIP {
+		return "Yes"
+	}
+	return "No"
+}
+
+func formatCheckStatus(isDisabled bool) string {
+	if isDisabled {
+		return "DISABLED"
+	}
+	return "ENABLED"
+}
+
+func getNotificationType(status models.Status) string {
+	switch status {
+	case models.StatusPermaban:
+		return "permaban_change"
+	case models.StatusShadowban:
+		return "shadowban_change"
+	case models.StatusTempban:
+		return "tempban_change"
+	case models.StatusRankLocked:
+		return "ranklocked_change"
+	default:
+		return "status_change"
+	}
+}
+
 func getDefaultCooldown() time.Duration {
 	cfg := configuration.Get()
 	return cfg.Notifications.DefaultCooldown
@@ -153,6 +182,7 @@ func FormatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dm", minutes)
 }
+
 func CheckAndNotifyBalance(s *discordgo.Session, userID string, balance float64) {
 	cfg := configuration.Get()
 	userSettings, err := GetUserSettings(userID)
@@ -816,33 +846,6 @@ func formatAccountStatus(account models.Account, status models.Status, timeUntil
 	statusDesc.WriteString(fmt.Sprintf(" | Checks: %s", formatCheckStatus(account.IsCheckDisabled)))
 
 	return statusDesc.String()
-}
-
-func formatVIPStatus(isVIP bool) string {
-	if isVIP {
-		return "VIP Account"
-	}
-	return "Regular Account"
-}
-
-func formatCheckStatus(isDisabled bool) string {
-	if isDisabled {
-		return "DISABLED"
-	}
-	return "ENABLED"
-}
-
-func getNotificationType(status models.Status) string {
-	switch status {
-	case models.StatusPermaban:
-		return "permaban"
-	case models.StatusShadowban:
-		return "shadowban"
-	case models.StatusTempban:
-		return "tempban"
-	default:
-		return "status_change"
-	}
 }
 
 func checkAccountsNeedingAttention(s *discordgo.Session, accounts []models.Account, userSettings models.UserSettings) {

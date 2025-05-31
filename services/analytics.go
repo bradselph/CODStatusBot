@@ -11,6 +11,15 @@ import (
 )
 
 func LogCommandExecution(commandName, userID, guildID string, success bool, responseTimeMs int64, errorDetails string) {
+	shardMgr := GetAppShardManager()
+	shardID := 0
+	instanceID := ""
+
+	if shardMgr.Initialized {
+		shardID = shardMgr.ShardID
+		instanceID = shardMgr.InstanceID
+	}
+
 	analytics := models.Analytics{
 		Type:           "command",
 		UserID:         userID,
@@ -21,6 +30,8 @@ func LogCommandExecution(commandName, userID, guildID string, success bool, resp
 		ErrorDetails:   errorDetails,
 		Timestamp:      time.Now(),
 		Day:            time.Now().Format("2006-01-02"),
+		ShardID:        shardID,
+		InstanceID:     instanceID,
 	}
 
 	if err := database.DB.Create(&analytics).Error; err != nil {
@@ -32,6 +43,15 @@ func LogCommandExecution(commandName, userID, guildID string, success bool, resp
 
 func LogAccountCheck(accountID uint, userID string, status models.Status, success bool,
 	captchaProvider string, captchaCost float64, responseTimeMs int64) {
+	shardMgr := GetAppShardManager()
+	shardID := 0
+	instanceID := ""
+
+	if shardMgr.Initialized {
+		shardID = shardMgr.ShardID
+		instanceID = shardMgr.InstanceID
+	}
+
 	analytics := models.Analytics{
 		Type:            "account_check",
 		UserID:          userID,
@@ -43,6 +63,8 @@ func LogAccountCheck(accountID uint, userID string, status models.Status, succes
 		CaptchaCost:     captchaCost,
 		Timestamp:       time.Now(),
 		Day:             time.Now().Format("2006-01-02"),
+		ShardID:         shardID,
+		InstanceID:      instanceID,
 	}
 
 	if err := database.DB.Create(&analytics).Error; err != nil {
@@ -54,6 +76,15 @@ func LogAccountCheck(accountID uint, userID string, status models.Status, succes
 
 func LogStatusChange(accountID uint, userID string, status models.Status,
 	previousStatus models.Status) {
+	shardMgr := GetAppShardManager()
+	shardID := 0
+	instanceID := ""
+
+	if shardMgr.Initialized {
+		shardID = shardMgr.ShardID
+		instanceID = shardMgr.InstanceID
+	}
+
 	analytics := models.Analytics{
 		Type:           "status_change",
 		UserID:         userID,
@@ -63,6 +94,8 @@ func LogStatusChange(accountID uint, userID string, status models.Status,
 		Success:        true,
 		Timestamp:      time.Now(),
 		Day:            time.Now().Format("2006-01-02"),
+		ShardID:        shardID,
+		InstanceID:     instanceID,
 	}
 
 	if err := database.DB.Create(&analytics).Error; err != nil {
@@ -73,6 +106,15 @@ func LogStatusChange(accountID uint, userID string, status models.Status,
 }
 
 func LogNotification(userID string, accountID uint, notificationType string, success bool) {
+	shardMgr := GetAppShardManager()
+	shardID := 0
+	instanceID := ""
+
+	if shardMgr.Initialized {
+		shardID = shardMgr.ShardID
+		instanceID = shardMgr.InstanceID
+	}
+
 	analytics := models.Analytics{
 		Type:        "notification",
 		UserID:      userID,
@@ -81,6 +123,8 @@ func LogNotification(userID string, accountID uint, notificationType string, suc
 		Success:     success,
 		Timestamp:   time.Now(),
 		Day:         time.Now().Format("2006-01-02"),
+		ShardID:     shardID,
+		InstanceID:  instanceID,
 	}
 
 	if err := database.DB.Create(&analytics).Error; err != nil {

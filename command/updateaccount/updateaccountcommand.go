@@ -315,7 +315,7 @@ func processAccountUpdate(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			return
 		}
 
-		services.HandleStatusChange(s, account, status, userSettings)
+		services.HandleStatusChange(s, account, status, &userSettings)
 	}()
 }
 

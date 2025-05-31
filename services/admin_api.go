@@ -15,9 +15,15 @@ import (
 )
 
 var allowedAPIKeys []string
+var startTime = time.Now()
 
 func StartAdminAPI() {
 	cfg := configuration.Get()
+
+	if !cfg.Admin.Enabled {
+		logger.Log.Info("Admin API is disabled")
+		return
+	}
 
 	if cfg.Admin.APIKey != "" {
 		allowedAPIKeys = append(allowedAPIKeys, cfg.Admin.APIKey)
@@ -30,6 +36,10 @@ func StartAdminAPI() {
 	http.HandleFunc("/api/stats/status", authMiddleware(getStatusStats))
 	http.HandleFunc("/api/stats/trends", authMiddleware(getTrendStats))
 	http.HandleFunc("/api/health", getHealthStatus)
+
+	http.HandleFunc("/api/shards", authMiddleware(getShardStatus))
+	http.HandleFunc("/api/proxies", authMiddleware(getProxyStatus))
+	http.HandleFunc("/api/system", authMiddleware(getSystemStatus))
 
 	go func() {
 		addr := ":" + strconv.Itoa(cfg.Admin.Port)
@@ -556,6 +566,230 @@ func aggregateData(dailyData []struct {
 	}
 
 	return aggregated
+}
+
+func getShardStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		enableCORS(w)
+		return
+	}
+
+	shardManager := GetAppShardManager()
+	shardStats := shardManager.GetShardingStatus()
+
+	var allShards []models.ShardInfo
+	if err := database.DB.Find(&allShards).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to fetch shard information")
+		http.Error(w, "Error fetching shard information", http.StatusInternalServerError)
+		return
+	}
+
+	activeShards := 0
+	inactiveShards := 0
+	shardsInfo := make([]map[string]interface{}, 0, len(allShards))
+
+	for _, shard := range allShards {
+		var parsedStats map[string]interface{}
+		if shard.Stats != "" {
+			if err := json.Unmarshal([]byte(shard.Stats), &parsedStats); err != nil {
+				logger.Log.WithError(err).Warn("Failed to parse shard stats JSON")
+				parsedStats = map[string]interface{}{}
+			}
+		} else {
+			parsedStats = map[string]interface{}{}
+		}
+
+		if shard.Status == "active" {
+			activeShards++
+		} else {
+			inactiveShards++
+		}
+
+		shardsInfo = append(shardsInfo, map[string]interface{}{
+			"id":             shard.ID,
+			"shard_id":       shard.ShardID,
+			"total_shards":   shard.TotalShards,
+			"instance_id":    shard.InstanceID,
+			"status":         shard.Status,
+			"last_heartbeat": shard.LastHeartbeat,
+			"heartbeat_age":  time.Since(shard.LastHeartbeat).Seconds(),
+			"stats":          parsedStats,
+			"current_shard":  shard.InstanceID == shardManager.InstanceID,
+		})
+	}
+
+	var userCount int64
+	if err := database.DB.Model(&models.UserSettings{}).Count(&userCount).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count users")
+	}
+
+	var accountCount int64
+	if err := database.DB.Model(&models.Account{}).Count(&accountCount).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count accounts")
+	}
+
+	response := map[string]interface{}{
+		"current_shard":      shardStats,
+		"active_shards":      activeShards,
+		"inactive_shards":    inactiveShards,
+		"shards":             shardsInfo,
+		"total_users":        userCount,
+		"total_accounts":     accountCount,
+		"sharding_enabled":   shardManager.TotalShards > 1,
+		"users_per_shard":    float64(userCount) / float64(activeShards),
+		"accounts_per_shard": float64(accountCount) / float64(activeShards),
+	}
+
+	writeJSONResponse(w, response)
+}
+
+func getProxyStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		enableCORS(w)
+		return
+	}
+
+	proxyManager := GetProxyManager()
+
+	var proxyStats []models.ProxyStats
+	if err := database.DB.Find(&proxyStats).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to fetch proxy statistics")
+		http.Error(w, "Error fetching proxy statistics", http.StatusInternalServerError)
+		return
+	}
+
+	proxiesInfo := make([]map[string]interface{}, 0, len(proxyStats))
+	activeProxies := 0
+	suspendedProxies := 0
+	totalSuccesses := int64(0)
+	totalFailures := int64(0)
+
+	for _, proxy := range proxyStats {
+		if proxy.Status == "active" {
+			activeProxies++
+		} else {
+			suspendedProxies++
+		}
+
+		totalSuccesses += proxy.SuccessCount
+		totalFailures += proxy.FailureCount
+
+		successRate := float64(0)
+		if proxy.SuccessCount+proxy.FailureCount > 0 {
+			successRate = float64(proxy.SuccessCount) / float64(proxy.SuccessCount+proxy.FailureCount) * 100
+		}
+
+		proxiesInfo = append(proxiesInfo, map[string]interface{}{
+			"id":                   proxy.ID,
+			"proxy_url":            proxy.ProxyURL,
+			"status":               proxy.Status,
+			"success_count":        proxy.SuccessCount,
+			"failure_count":        proxy.FailureCount,
+			"consecutive_failures": proxy.ConsecutiveFailures,
+			"last_check":           proxy.LastCheck,
+			"check_age":            time.Since(proxy.LastCheck).Seconds(),
+			"last_error":           proxy.LastError,
+			"success_rate":         successRate,
+			"rate_limited_until":   proxy.RateLimitedUntil,
+		})
+	}
+
+	overallSuccessRate := float64(0)
+	if totalSuccesses+totalFailures > 0 {
+		overallSuccessRate = float64(totalSuccesses) / float64(totalSuccesses+totalFailures) * 100
+	}
+
+	response := map[string]interface{}{
+		"proxies_enabled":   proxyManager.ProxyEnabled,
+		"active_proxies":    activeProxies,
+		"suspended_proxies": suspendedProxies,
+		"success_rate":      overallSuccessRate,
+		"total_successes":   totalSuccesses,
+		"total_failures":    totalFailures,
+		"rotation_strategy": proxyManager.RotationStrategy,
+		"proxies":           proxiesInfo,
+	}
+
+	writeJSONResponse(w, response)
+}
+
+func getSystemStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		enableCORS(w)
+		return
+	}
+
+	cfg := configuration.Get()
+
+	shardManager := GetAppShardManager()
+
+	proxyManager := GetProxyManager()
+
+	dbStats, err := database.DB.DB()
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to get database stats")
+	}
+
+	var userCount int64
+	var accountCount int64
+	var activeAccountCount int64
+	var analyticsCount int64
+	var todayAnalyticsCount int64
+
+	database.DB.Model(&models.UserSettings{}).Count(&userCount)
+	database.DB.Model(&models.Account{}).Count(&accountCount)
+	database.DB.Model(&models.Account{}).Where("is_check_disabled = ? AND is_expired_cookie = ?", false, false).Count(&activeAccountCount)
+	database.DB.Model(&models.Analytics{}).Count(&analyticsCount)
+
+	todayStr := time.Now().Format("2006-01-02")
+	database.DB.Model(&models.Analytics{}).Where("day = ?", todayStr).Count(&todayAnalyticsCount)
+
+	processUptime := time.Since(startTime).String()
+
+	response := map[string]interface{}{
+		"server_time":    time.Now(),
+		"process_uptime": processUptime,
+		"environment":    cfg.Environment,
+		"sharding": map[string]interface{}{
+			"enabled":      shardManager.TotalShards > 1,
+			"shard_id":     shardManager.ShardID,
+			"total_shards": shardManager.TotalShards,
+			"instance_id":  shardManager.InstanceID,
+		},
+		"proxies": map[string]interface{}{
+			"enabled":      proxyManager.ProxyEnabled,
+			"count":        len(proxyManager.Proxies),
+			"active_count": len(proxyManager.ActiveProxies),
+			"rotation":     proxyManager.RotationStrategy,
+		},
+		"database": map[string]interface{}{
+			"max_open_conns":   cfg.Performance.DbMaxOpenConns,
+			"max_idle_conns":   cfg.Performance.DbMaxIdleConns,
+			"open_connections": dbStats.Stats().OpenConnections,
+			"in_use":           dbStats.Stats().InUse,
+			"idle":             dbStats.Stats().Idle,
+		},
+		"data": map[string]interface{}{
+			"users":           userCount,
+			"accounts":        accountCount,
+			"active_accounts": activeAccountCount,
+			"analytics_total": analyticsCount,
+			"analytics_today": todayAnalyticsCount,
+		},
+		"rate_limits": map[string]interface{}{
+			"check_now":        cfg.RateLimits.CheckNow.Seconds(),
+			"default":          cfg.RateLimits.Default.Seconds(),
+			"default_accounts": cfg.RateLimits.DefaultMaxAccounts,
+			"premium_accounts": cfg.RateLimits.PremiumMaxAccounts,
+		},
+		"intervals": map[string]interface{}{
+			"check":        cfg.Intervals.Check,
+			"sleep":        cfg.Intervals.Sleep,
+			"notification": cfg.Intervals.Notification,
+		},
+	}
+
+	writeJSONResponse(w, response)
 }
 
 func calculatePercentage(part, total int64) float64 {

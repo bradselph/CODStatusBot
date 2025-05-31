@@ -8,35 +8,38 @@ import (
 
 type Account struct { // The accounts table
 	gorm.Model
-	UserID                 string    `gorm:"index"`      // The ID of the user.
-	GuildID                string    `gorm:"default:''"` // The guild ID if the account was added in a server context
-	ChannelID              string    // The ID of the channel associated with the account.
-	Title                  string    // user assigned title for the account
-	ActivisionID           string    // The Activision ID associated with this account
-	LastStatus             Status    `gorm:"default:unknown"` // The last known status of the account.
-	LastCheck              int64     `gorm:"default:0"`       // The timestamp of the last check performed on the account.
-	LastNotification       int64     // The timestamp of the last daily notification sent out on the account.
-	LastCookieNotification int64     // The timestamp of the last notification sent out on the account for an expired ssocookie.
-	SSOCookie              string    // The SSO cookie associated with the account.
-	Created                int64     // The timestamp of when the account was created on Activision.
-	IsExpiredCookie        bool      `gorm:"default:false"`   // A flag indicating if the SSO cookie has expired.
-	NotificationType       string    `gorm:"default:channel"` // User preference for location of notifications either channel or dm
-	IsPermabanned          bool      `gorm:"default:false"`   // A flag indicating if the account is permanently banned
-	IsShadowbanned         bool      `gorm:"default:false"`   // A flag indicating if the account is shadowbanned
-	IsTempbanned           bool      `gorm:"default:false"`   // A flag indicating if the account is temporarily banned
-	IsVIP                  bool      `gorm:"default:false"`   // A flag indicating if the account is a VIP
-	IsOGVerdansk           bool      `gorm:"default:false"`   // A flag indicating if account has Verdansk stats
-	LastCookieCheck        int64     `gorm:"default:0"`       // The timestamp of the last cookie check for permanently banned accounts.
-	LastStatusChange       int64     `gorm:"default:0"`       // The timestamp of the last status change
-	IsCheckDisabled        bool      `gorm:"default:false"`   // A flag indicating if checks are disabled for this account
-	DisabledReason         string    // Reason for disabling checks
-	SSOCookieExpiration    int64     // The timestamp of the SSO cookie expiration
-	ConsecutiveErrors      int       `gorm:"default:0"` // The number of consecutive errors encountered while checking the account
-	LastSuccessfulCheck    time.Time // The timestamp of the last successful check
-	LastErrorTime          time.Time // The timestamp of the last error encountered
-	Last24HourNotification time.Time // The timestamp of the last 24-hour notification
-	LastCheckNowTime       time.Time // For check now command rate limiting
-	LastAddAccountTime     time.Time // For add account rate limiting
+	UserID                  string            `gorm:"index"`      // The ID of the user.
+	GuildID                 string            `gorm:"default:''"` // The guild ID if the account was added in a server context
+	ChannelID               string            // The ID of the channel associated with the account.
+	Title                   string            // user assigned title for the account
+	ActivisionID            string            // The Activision ID associated with this account
+	LastStatus              Status            `gorm:"default:unknown"` // The last known status of the account.
+	LastCheck               int64             `gorm:"default:0"`       // The timestamp of the last check performed on the account.
+	LastNotification        int64             // The timestamp of the last daily notification sent out on the account.
+	LastCookieNotification  int64             // The timestamp of the last notification sent out on the account for an expired ssocookie.
+	SSOCookie               string            // The SSO cookie associated with the account.
+	Created                 int64             // The timestamp of when the account was created on Activision.
+	IsExpiredCookie         bool              `gorm:"default:false"`   // A flag indicating if the SSO cookie has expired.
+	NotificationType        string            `gorm:"default:channel"` // User preference for location of notifications either channel or dm
+	IsPermabanned           bool              `gorm:"default:false"`   // A flag indicating if the account is permanently banned
+	IsShadowbanned          bool              `gorm:"default:false"`   // A flag indicating if the account is shadowbanned
+	IsTempbanned            bool              `gorm:"default:false"`   // A flag indicating if the account is temporarily banned
+	IsVIP                   bool              `gorm:"default:false"`   // A flag indicating if the account is a VIP
+	IsOGVerdansk            bool              `gorm:"default:false"`   // A flag indicating if account has Verdansk stats
+	LastCookieCheck         int64             `gorm:"default:0"`       // The timestamp of the last cookie check for permanently banned accounts.
+	LastStatusChange        int64             `gorm:"default:0"`       // The timestamp of the last status change
+	IsCheckDisabled         bool              `gorm:"default:false"`   // A flag indicating if checks are disabled for this account
+	DisabledReason          string            // Reason for disabling checks
+	SSOCookieExpiration     int64             // The timestamp of the SSO cookie expiration
+	ConsecutiveErrors       int               `gorm:"default:0"` // The number of consecutive errors encountered while checking the account
+	LastSuccessfulCheck     time.Time         // The timestamp of the last successful check
+	LastErrorTime           time.Time         // The timestamp of the last error encountered
+	Last24HourNotification  time.Time         // The timestamp of the last 24-hour notification
+	LastCheckNowTime        time.Time         // For check now command rate limiting
+	LastAddAccountTime      time.Time         // For add account rate limiting
+	GameSpecificBans        map[string]string `gorm:"serializer:json"` // Map of game titles to ban status
+	IsRankLocked            bool              `gorm:"default:false"`   // Flag for ranked play restriction
+	IsCampaignOnlyShadowban bool              `gorm:"default:false"`   // Flag for BO6 campaign-only shadowbans
 }
 
 type UserSettings struct { // User settings for the bot
@@ -54,6 +57,7 @@ type UserSettings struct { // User settings for the bot
 	StatusChangeCooldown         float64              // the user's cooldown duration for status changes
 	HasSeenAnnouncement          bool                 `gorm:"default:false"`   // Flag to track if the user has seen the global announcement.
 	NotificationType             string               `gorm:"default:channel"` // User preference for location of notifications either channel or dm
+	PreferEphemeralResponses     bool                 `gorm:"default:false"`   // Flag to prefer ephemeral messages
 	NotificationTimes            map[string]time.Time `gorm:"serializer:json"` // For all notification cooldowns
 	ActionCounts                 map[string]int       `gorm:"serializer:json"` // For counting actions within time windows
 	LastActionTimes              map[string]time.Time `gorm:"serializer:json"` // For tracking when actions were last performed
@@ -77,20 +81,23 @@ type UserSettings struct { // User settings for the bot
 	LastMessageFailure           time.Time            // Timestamp of the last failed message
 	IsUnreachable                bool                 `gorm:"default:false"` // Flag to indicate if the account is unreachable
 	UnreachableSince             time.Time            // Timestamp when the account became unreachable
+	RateLimitBackoff             map[string]int       `gorm:"serializer:json"` // Exponential backoff multipliers per endpoint
+	LastRateLimitHit             map[string]time.Time `gorm:"serializer:json"` // Last time each endpoint was rate limited
 }
 type Ban struct { // Define the Ban struct
 	gorm.Model
-	Account         Account   // The account that has a status history.
-	AccountID       uint      // The ID of the account.
-	Status          Status    // The status of the ban.
-	LogType         string    // Type of log entry ("status_change", "account_added", "cookie_update", "check_disabled", "error")
-	Message         string    // Detailed message about the log entry
-	PreviousStatus  Status    // Store the previous status for better tracking
-	TempBanDuration string    // Duration of the temporary ban (if applicable)
-	AffectedGames   string    // Comma-separated list of affected games
-	Timestamp       time.Time `gorm:"default:CURRENT_TIMESTAMP"` // When this log entry was created
-	Initiator       string    // "auto_check" or "manual_check" or "system"
-	ErrorDetails    string    // For storing error information when relevant
+	Account          Account           // The account that has a status history.
+	AccountID        uint              // The ID of the account.
+	Status           Status            // The status of the ban.
+	LogType          string            // Type of log entry ("status_change", "account_added", "cookie_update", "check_disabled", "error")
+	Message          string            // Detailed message about the log entry
+	PreviousStatus   Status            // Store the previous status for better tracking
+	TempBanDuration  string            // Duration of the temporary ban (if applicable)
+	AffectedGames    string            // Comma-separated list of affected games
+	GameSpecificBans map[string]string `gorm:"serializer:json"`           // Map of game titles to enforcement types
+	Timestamp        time.Time         `gorm:"default:CURRENT_TIMESTAMP"` // When this log entry was created
+	Initiator        string            // "auto_check" or "manual_check" or "system"
+	ErrorDetails     string            // For storing error information when relevant
 }
 type SuppressedNotification struct { // The suppressed notifications table
 	gorm.Model
@@ -98,6 +105,29 @@ type SuppressedNotification struct { // The suppressed notifications table
 	NotificationType string    // The type of notification suppressed.
 	Content          string    `gorm:"type:text"` // The content of the suppressed notification.
 	Timestamp        time.Time `gorm:"index"`     // The timestamp of the suppressed notification.
+}
+
+type ShardInfo struct { // Information about application shards
+	gorm.Model
+	ShardID       int       `gorm:"index"` // The shard ID
+	TotalShards   int       // The total number of shards
+	InstanceID    string    `gorm:"uniqueIndex"`      // Unique identifier for this instance
+	LastHeartbeat time.Time `gorm:"index"`            // Last time this shard reported as alive
+	Status        string    `gorm:"default:'active'"` // Status of this shard: active, inactive
+	Stats         string    `gorm:"type:text"`        // JSON encoded stats about this shard
+}
+
+type ProxyStats struct { // Statistics about HTTP proxies
+	gorm.Model
+	ProxyURL            string     `gorm:"uniqueIndex"`      // Masked proxy URL (no credentials)
+	Status              string     `gorm:"default:'active'"` // Status: active, suspended
+	SuccessCount        int64      // Number of successful requests
+	FailureCount        int64      // Number of failed requests
+	ConsecutiveFailures int        `gorm:"default:0"` // Current consecutive failures
+	LastCheck           time.Time  // Last time this proxy was checked
+	LastError           string     // Last error message
+	RateLimitedUntil    *time.Time // When rate limiting expires (nil if not rate limited)
+	Stats               string     `gorm:"type:text"` // Additional stats as JSON
 }
 type Analytics struct { // The analytics table
 	gorm.Model
@@ -115,6 +145,8 @@ type Analytics struct { // The analytics table
 	ErrorDetails    string    // For storing error information when relevant
 	Timestamp       time.Time `gorm:"index"` // When this log entry was created
 	Day             string    `gorm:"index"` // YYYY-MM-DD format for easy querying
+	ShardID         int       `gorm:"index"` // The shard ID that processed this event
+	InstanceID      string    `gorm:"index"` // The instance ID that processed this event
 }
 type Status string // The status of the account.
 
@@ -125,6 +157,8 @@ const (
 	StatusUnknown       Status = "Unknown"        // The account status not known.
 	StatusInvalidCookie Status = "Invalid_Cookie" // The account has an invalid SSO cookie.
 	StatusTempban       Status = "Temporary"      // The account status returned as temporarily banned.
+	StatusRankLocked    Status = "RankLocked"     // The account is restricted from ranked play.
+	StatusPartialBan    Status = "PartialBan"     // The account has game-specific bans.
 )
 
 type CaptchaProvider string // The type of captcha provider used.
@@ -150,6 +184,12 @@ func (u *UserSettings) EnsureMapsInitialized() {
 	}
 	if u.RateLimitExpiration == nil {
 		u.RateLimitExpiration = make(map[string]time.Time)
+	}
+	if u.RateLimitBackoff == nil {
+		u.RateLimitBackoff = make(map[string]int)
+	}
+	if u.LastRateLimitHit == nil {
+		u.LastRateLimitHit = make(map[string]time.Time)
 	}
 }
 
@@ -212,6 +252,9 @@ func (a *Account) BeforeCreate(tx *gorm.DB) error {
 	if a.LastStatusChange <= 0 {
 		a.LastStatusChange = now.Unix()
 	}
+	if a.GameSpecificBans == nil {
+		a.GameSpecificBans = make(map[string]string)
+	}
 
 	return nil
 }
@@ -231,5 +274,12 @@ func (a *Account) BeforeSave(tx *gorm.DB) error {
 		a.LastCheck = now.Unix()
 	}
 
+	return nil
+}
+
+func (a *Account) AfterFind(tx *gorm.DB) error {
+	if a.GameSpecificBans == nil {
+		a.GameSpecificBans = make(map[string]string)
+	}
 	return nil
 }

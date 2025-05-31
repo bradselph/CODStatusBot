@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/bradselph/CODStatusBot/configuration"
+	"github.com/bradselph/CODStatusBot/logger"
 )
 
 var (
@@ -21,48 +24,46 @@ func InitHTTPClients() {
 		return
 	}
 
-	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
-		DisableKeepAlives:   false,
-		ForceAttemptHTTP2:   true,
-		MaxConnsPerHost:     0,
-		TLSHandshakeTimeout: 10 * time.Second,
-	}
+	cfg := configuration.Get()
+	proxyManager := GetProxyManager()
 
-	defaultRoundTripper := &defaultHeaderTransport{
-		base: transport,
-	}
+	if cfg.Proxy.Enabled && len(cfg.Proxy.Proxies) > 0 {
+		logger.Log.Infof("Using proxies for HTTP clients, %d proxies available", len(cfg.Proxy.Proxies))
+		defaultClient = proxyManager.GetClient()
 
-	defaultClient = &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: defaultRoundTripper,
-	}
+		longTimeoutClient = &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: defaultClient.Transport,
+		}
+	} else {
+		logger.Log.Info("Using direct HTTP clients without proxies")
 
-	longTimeoutClient = &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: defaultRoundTripper,
+		transport := &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 20,
+			IdleConnTimeout:     90 * time.Second,
+			DisableKeepAlives:   false,
+			ForceAttemptHTTP2:   true,
+			MaxConnsPerHost:     0,
+			TLSHandshakeTimeout: 10 * time.Second,
+		}
+
+		defaultClient = &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: NewHeaderTransport(transport, cfg.Proxy.UserAgents),
+		}
+
+		longTimeoutClient = &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: NewHeaderTransport(transport, cfg.Proxy.UserAgents),
+		}
 	}
 
 	clientsInitialized = true
 }
 
-type defaultHeaderTransport struct {
-	base http.RoundTripper
-}
-
-func (t *defaultHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("User-Agent") == "" {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-	}
-
-	return t.base.RoundTrip(req)
-}
-
 func GetDefaultHTTPClient() *http.Client {
 	clientMutex.RLock()
-	defer clientMutex.RUnlock()
 
 	if !clientsInitialized {
 		clientMutex.RUnlock()
@@ -70,12 +71,19 @@ func GetDefaultHTTPClient() *http.Client {
 		clientMutex.RLock()
 	}
 
+	cfg := configuration.Get()
+	if cfg.Proxy.Enabled {
+		clientMutex.RUnlock()
+		proxyManager := GetProxyManager()
+		return proxyManager.GetClient()
+	}
+
+	defer clientMutex.RUnlock()
 	return defaultClient
 }
 
 func GetLongTimeoutHTTPClient() *http.Client {
 	clientMutex.RLock()
-	defer clientMutex.RUnlock()
 
 	if !clientsInitialized {
 		clientMutex.RUnlock()
@@ -83,5 +91,18 @@ func GetLongTimeoutHTTPClient() *http.Client {
 		clientMutex.RLock()
 	}
 
+	cfg := configuration.Get()
+	if cfg.Proxy.Enabled {
+		clientMutex.RUnlock()
+		proxyManager := GetProxyManager()
+
+		client := proxyManager.GetClient()
+		return &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: client.Transport,
+		}
+	}
+
+	defer clientMutex.RUnlock()
 	return longTimeoutClient
 }
