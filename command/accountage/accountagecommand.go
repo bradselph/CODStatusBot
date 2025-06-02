@@ -60,14 +60,7 @@ func CommandAccountAge(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		components = append(components, discordgo.ActionsRow{Components: currentRow})
 	}
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content:    "Select an account to check its age:",
-			Flags:      discordgo.MessageFlagsEphemeral,
-			Components: components,
-		},
-	})
+	err := services.RespondWithPreferenceAndComponents(s, i, "Select an account to check its age:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with account selection")
 	}
@@ -149,13 +142,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 		},
 	}
 
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: []discordgo.MessageComponent{},
-		},
-	})
+	err = services.UpdateMessageWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, []discordgo.MessageComponent{})
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction with account age")
 		respondToInteraction(s, i, "Error displaying account age. Please try again.")
@@ -163,13 +150,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, content, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}

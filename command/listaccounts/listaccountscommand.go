@@ -21,12 +21,7 @@ var (
 )
 
 func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.DeferWithPreference(s, i, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to defer response")
 		return
@@ -124,20 +119,14 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 	}
 
-	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Embeds: []*discordgo.MessageEmbed{embed},
-		Flags:  discordgo.MessageFlagsEphemeral,
-	})
+	_, err = services.FollowupWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}
 }
 
 func sendFollowup(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: content,
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, content, nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}

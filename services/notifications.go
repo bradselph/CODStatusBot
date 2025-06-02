@@ -767,6 +767,7 @@ func SendConsolidatedDailyUpdate(s *discordgo.Session, userID string, userSettin
 		}
 
 		if description.Len() > 0 {
+			//goland:noinspection GoDeprecation
 			embedFields = append(embedFields, &discordgo.MessageEmbedField{
 				Name:   fmt.Sprintf("%s Accounts", strings.Title(string(status))),
 				Value:  description.String(),

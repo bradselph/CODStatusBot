@@ -57,7 +57,7 @@ type UserSettings struct { // User settings for the bot
 	StatusChangeCooldown         float64              // the user's cooldown duration for status changes
 	HasSeenAnnouncement          bool                 `gorm:"default:false"`   // Flag to track if the user has seen the global announcement.
 	NotificationType             string               `gorm:"default:channel"` // User preference for location of notifications either channel or dm
-	PreferEphemeralResponses     bool                 `gorm:"default:false"`   // Flag to prefer ephemeral messages
+	PreferEphemeralResponses     bool                 `gorm:"default:true"`    // Flag to prefer ephemeral messages
 	NotificationTimes            map[string]time.Time `gorm:"serializer:json"` // For all notification cooldowns
 	ActionCounts                 map[string]int       `gorm:"serializer:json"` // For counting actions within time windows
 	LastActionTimes              map[string]time.Time `gorm:"serializer:json"` // For tracking when actions were last performed

@@ -8,6 +8,7 @@ import (
 	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/services"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -58,14 +59,7 @@ func CommandRemoveAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	if len(currentRow) > 0 {
 		components = append(components, discordgo.ActionsRow{Components: currentRow})
 	}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content:    "Select an account to remove:",
-			Flags:      discordgo.MessageFlagsEphemeral,
-			Components: components,
-		},
-	})
+	err := services.RespondWithPreferenceAndComponents(s, i, "Select an account to remove:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with account selection")
 	}
@@ -88,53 +82,27 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 		return
 	}
 
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Content: fmt.Sprintf("Are you sure you want to remove the account '%s'? This action is permanent and cannot be undone.", account.Title),
+	confirmComponents := []discordgo.MessageComponent{
+		discordgo.ActionsRow{
 			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{
-					Components: []discordgo.MessageComponent{
-						discordgo.Button{
-							Label:    "Delete",
-							Style:    discordgo.DangerButton,
-							CustomID: fmt.Sprintf("confirm_remove_%d", account.ID),
-						},
-						discordgo.Button{
-							Label:    "Cancel",
-							Style:    discordgo.SecondaryButton,
-							CustomID: "cancel_remove",
-						},
-					},
+				discordgo.Button{
+					Label:    "Delete",
+					Style:    discordgo.DangerButton,
+					CustomID: fmt.Sprintf("confirm_remove_%d", account.ID),
+				},
+				discordgo.Button{
+					Label:    "Cancel",
+					Style:    discordgo.SecondaryButton,
+					CustomID: "cancel_remove",
 				},
 			},
 		},
-	})
+	}
+
+	err = services.UpdateMessageWithPreference(s, i, fmt.Sprintf("Are you sure you want to remove the account '%s'? This action is permanent and cannot be undone.", account.Title), nil, confirmComponents)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error showing confirmation buttons")
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("Are you sure you want to remove the account '%s'? This action is permanent and cannot be undone.", account.Title),
-				Flags:   discordgo.MessageFlagsEphemeral,
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{
-						Components: []discordgo.MessageComponent{
-							discordgo.Button{
-								Label:    "Delete",
-								Style:    discordgo.DangerButton,
-								CustomID: fmt.Sprintf("confirm_remove_%d", account.ID),
-							},
-							discordgo.Button{
-								Label:    "Cancel",
-								Style:    discordgo.SecondaryButton,
-								CustomID: "cancel_remove",
-							},
-						},
-					},
-				},
-			},
-		})
+		err = services.RespondWithPreferenceAndComponents(s, i, fmt.Sprintf("Are you sure you want to remove the account '%s'? This action is permanent and cannot be undone.", account.Title), nil, confirmComponents, false)
 		if err != nil {
 			logger.Log.WithError(err).Error("Error sending confirmation message")
 			respondToInteraction(s, i, "An error occurred. Please try again.")
@@ -191,32 +159,17 @@ func HandleConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Content:    message,
-			Components: []discordgo.MessageComponent{},
-		},
-	})
+	err := services.UpdateMessageWithPreference(s, i, message, nil, []discordgo.MessageComponent{})
 
 	if err != nil {
 		logger.Log.WithError(err).Error("Error updating message, trying to send new message")
 
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: message,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
+		err = services.RespondWithPreference(s, i, message, nil, false)
 
 		if err != nil {
 			logger.Log.WithError(err).Error("Error sending new message, trying followup")
 
-			_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Content: message,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			})
+			_, err = services.FollowupWithPreference(s, i, message, nil, nil, false)
 
 			if err != nil {
 				logger.Log.WithError(err).Error("All response methods failed")

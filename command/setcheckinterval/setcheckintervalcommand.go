@@ -60,24 +60,19 @@ func CommandSetCheckInterval(s *discordgo.Session, i *discordgo.InteractionCreat
 		},
 	}
 
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Embeds: []*discordgo.MessageEmbed{explanationEmbed},
+	intervalComponents := []discordgo.MessageComponent{
+		discordgo.ActionsRow{
 			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{
-					Components: []discordgo.MessageComponent{
-						discordgo.Button{
-							Label:    "Configure",
-							Style:    discordgo.PrimaryButton,
-							CustomID: "show_interval_modal",
-						},
-					},
+				discordgo.Button{
+					Label:    "Configure",
+					Style:    discordgo.PrimaryButton,
+					CustomID: "show_interval_modal",
 				},
 			},
-			Flags: discordgo.MessageFlagsEphemeral,
 		},
-	})
+	}
+
+	err = services.RespondWithPreferenceAndComponents(s, i, "", []*discordgo.MessageEmbed{explanationEmbed}, intervalComponents, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending explanation message")
 	}
@@ -288,21 +283,7 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string, embeds ...*discordgo.MessageEmbed) {
-	response := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	}
-
-	if message != "" {
-		response.Data.Content = message
-	}
-	if len(embeds) > 0 {
-		response.Data.Embeds = embeds
-	}
-
-	err := s.InteractionRespond(i.Interaction, response)
+	err := services.RespondWithPreference(s, i, message, embeds, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}

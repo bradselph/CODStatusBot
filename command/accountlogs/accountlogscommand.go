@@ -75,14 +75,7 @@ func CommandAccountLogs(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	components = append(components, discordgo.ActionsRow{Components: currentRow})
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content:    "Select an account to view its logs, or 'View All Logs' to see logs for all accounts:",
-			Flags:      discordgo.MessageFlagsEphemeral,
-			Components: components,
-		},
-	})
+	err := services.RespondWithPreferenceAndComponents(s, i, "Select an account to view its logs, or 'View All Logs' to see logs for all accounts:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with account selection")
 	}
@@ -118,13 +111,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 
 	embed := createAccountLogEmbed(account)
 
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: []discordgo.MessageComponent{},
-		},
-	})
+	err = services.UpdateMessageWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, []discordgo.MessageComponent{})
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction with account logs")
 		respondToInteraction(s, i, "Error displaying account logs. Please try again.")
@@ -170,19 +157,9 @@ func handleAllAccountLogs(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 		var err error
 		if j == 0 {
-			err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseUpdateMessage,
-				Data: &discordgo.InteractionResponseData{
-					Content:    "",
-					Embeds:     embeds[j:end],
-					Components: []discordgo.MessageComponent{},
-				},
-			})
+			err = services.UpdateMessageWithPreference(s, i, "", embeds[j:end], []discordgo.MessageComponent{})
 		} else {
-			_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Embeds: embeds[j:end],
-				Flags:  discordgo.MessageFlagsEphemeral,
-			})
+			_, err = services.FollowupWithPreference(s, i, "", embeds[j:end], nil, false)
 		}
 
 		if err != nil {
@@ -282,32 +259,17 @@ func formatTimeField(timestamp int64) string {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, content, nil, false)
 
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with channel message, trying update message")
 
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: &discordgo.InteractionResponseData{
-				Content: content,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
+		err = services.UpdateMessageWithPreference(s, i, content, nil, []discordgo.MessageComponent{})
 
 		if err != nil {
 			logger.Log.WithError(err).Error("Error updating message, trying followup")
 
-			_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Content: content,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			})
+			_, err = services.FollowupWithPreference(s, i, content, nil, nil, false)
 
 			if err != nil {
 				logger.Log.WithError(err).Error("All response methods failed")

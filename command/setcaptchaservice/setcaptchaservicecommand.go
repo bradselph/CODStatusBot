@@ -47,16 +47,11 @@ func CommandSetCaptchaService(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Select a captcha service provider:",
-			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{Components: components},
-			},
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	captchaComponents := []discordgo.MessageComponent{
+		discordgo.ActionsRow{Components: components},
+	}
+
+	err := services.RespondWithPreferenceAndComponents(s, i, "Select a captcha service provider:", nil, captchaComponents, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with service selection")
 	}
@@ -252,34 +247,19 @@ func updateAPIKeys(settings *models.UserSettings, provider, apiKey string) {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: message,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, message, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}
 }
 
 func respondToInteractionWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, message string, embed *discordgo.MessageEmbed) {
-	response := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	}
-
-	if message != "" {
-		response.Data.Content = message
-	}
+	embeds := []*discordgo.MessageEmbed{}
 	if embed != nil {
-		response.Data.Embeds = []*discordgo.MessageEmbed{embed}
+		embeds = []*discordgo.MessageEmbed{embed}
 	}
 
-	err := s.InteractionRespond(i.Interaction, response)
+	err := services.RespondWithPreference(s, i, message, embeds, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction with embed")
 	}

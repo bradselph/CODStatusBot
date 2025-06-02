@@ -7,6 +7,7 @@ import (
 	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bradselph/CODStatusBot/services"
 	"github.com/bradselph/CODStatusBot/utils"
 	"github.com/bwmarrin/discordgo"
 )
@@ -136,22 +137,9 @@ func getUserID(i *discordgo.InteractionCreate) string {
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
 	var err error
 	if i.Type == discordgo.InteractionMessageComponent {
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: &discordgo.InteractionResponseData{
-				Content:    message,
-				Components: []discordgo.MessageComponent{},
-				Flags:      discordgo.MessageFlagsEphemeral,
-			},
-		})
+		err = services.UpdateMessageWithPreference(s, i, message, nil, []discordgo.MessageComponent{})
 	} else {
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: message,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
+		err = services.RespondWithPreference(s, i, message, nil, false)
 	}
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")

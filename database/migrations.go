@@ -42,8 +42,13 @@ func RunMigrations() {
 
 	if !DB.Migrator().HasColumn(&models.UserSettings{}, "prefer_ephemeral_responses") {
 		logger.Log.Info("Adding prefer_ephemeral_responses column to UserSettings table")
-		if err := DB.Exec("ALTER TABLE user_settings ADD COLUMN prefer_ephemeral_responses BOOLEAN DEFAULT FALSE").Error; err != nil {
+		if err := DB.Exec("ALTER TABLE user_settings ADD COLUMN prefer_ephemeral_responses BOOLEAN DEFAULT TRUE").Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to add prefer_ephemeral_responses column to UserSettings table")
+		}
+
+		logger.Log.Info("Setting prefer_ephemeral_responses to TRUE for all existing users")
+		if err := DB.Exec("UPDATE user_settings SET prefer_ephemeral_responses = TRUE WHERE prefer_ephemeral_responses IS NULL OR prefer_ephemeral_responses = FALSE").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to update existing users to prefer ephemeral responses")
 		}
 	}
 
@@ -72,6 +77,28 @@ func RunMigrations() {
 		logger.Log.Info("Adding is_campaign_only_shadowban column to Account table")
 		if err := DB.Exec("ALTER TABLE accounts ADD COLUMN is_campaign_only_shadowban BOOLEAN DEFAULT FALSE").Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to add is_campaign_only_shadowban column to Account table")
+		}
+	}
+
+	MigrateEphemeralDefaults()
+}
+
+func MigrateEphemeralDefaults() {
+	logger.Log.Info("Running ephemeral defaults migration")
+
+	var count int64
+	if err := DB.Model(&models.UserSettings{}).Where("prefer_ephemeral_responses = FALSE OR prefer_ephemeral_responses IS NULL").Count(&count).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count users needing ephemeral migration")
+		return
+	}
+
+	if count > 0 {
+		logger.Log.Infof("Migrating %d users to prefer ephemeral responses by default", count)
+		result := DB.Model(&models.UserSettings{}).Where("prefer_ephemeral_responses = FALSE OR prefer_ephemeral_responses IS NULL").Update("prefer_ephemeral_responses", true)
+		if result.Error != nil {
+			logger.Log.WithError(result.Error).Error("Failed to migrate users to ephemeral default")
+		} else {
+			logger.Log.Infof("Successfully migrated %d users to ephemeral default", result.RowsAffected)
 		}
 	}
 }

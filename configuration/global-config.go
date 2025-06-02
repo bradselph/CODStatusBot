@@ -439,7 +439,7 @@ func validate() error {
 	}
 
 	if AppConfig.CaptchaService.Capsolver.Enabled && AppConfig.CaptchaService.Capsolver.ClientKey == "" {
-		return fmt.Errorf("Capsolver is enabled but no client key provided")
+		return fmt.Errorf("capsolver is enabled but no client key provided")
 	}
 	if AppConfig.CaptchaService.EZCaptcha.Enabled && AppConfig.CaptchaService.EZCaptcha.ClientKey == "" {
 		return fmt.Errorf("EZCaptcha is enabled but no client key provided")

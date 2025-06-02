@@ -132,19 +132,7 @@ func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, ac
 		components = append(components, discordgo.ActionsRow{Components: currentRow})
 	}
 
-	flags := discordgo.MessageFlags(0)
-	if userSettings.PreferEphemeralResponses {
-		flags = discordgo.MessageFlagsEphemeral
-	}
-
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content:    "Select an account to check, or 'Check All' to check all accounts:",
-			Flags:      flags,
-			Components: components,
-		},
-	})
+	err = services.RespondWithPreferenceAndComponents(s, i, "Select an account to check, or 'Check All' to check all accounts:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with account selection")
 	}
@@ -324,23 +312,12 @@ func formatDuration(d time.Duration) string {
 }
 
 func respondToInteractionWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embed *discordgo.MessageEmbed, ephemeral bool) {
-	responseData := &discordgo.InteractionResponseData{}
-
-	if ephemeral {
-		responseData.Flags = discordgo.MessageFlagsEphemeral
-	}
-
-	if content != "" {
-		responseData.Content = content
-	}
+	embeds := []*discordgo.MessageEmbed{}
 	if embed != nil {
-		responseData.Embeds = []*discordgo.MessageEmbed{embed}
+		embeds = []*discordgo.MessageEmbed{embed}
 	}
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: responseData,
-	})
+	err := services.RespondWithPreference(s, i, content, embeds, ephemeral)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction with embed")
 	}
@@ -354,26 +331,13 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 		return
 	}
 
-	flags := discordgo.MessageFlags(0)
-	if userSettings.PreferEphemeralResponses {
-		flags = discordgo.MessageFlagsEphemeral
-	}
-
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: flags,
-		},
-	})
+	err = services.DeferWithPreference(s, i, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to defer interaction response")
 		return
 	}
 
-	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: fmt.Sprintf("Starting check of %d accounts...", len(accounts)),
-		Flags:   flags,
-	})
+	_, err = services.FollowupWithPreference(s, i, fmt.Sprintf("Starting check of %d accounts...", len(accounts)), nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to send initial status message")
 	}
@@ -433,10 +397,7 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 			}
 		}
 
-		_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-			Embeds: []*discordgo.MessageEmbed{embed},
-			Flags:  flags,
-		})
+		_, err := services.FollowupWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, nil, false)
 		if err != nil {
 			logger.Log.WithError(err).Error("Failed to send follow-up message")
 		}
@@ -446,10 +407,7 @@ func checkAccounts(s *discordgo.Session, i *discordgo.InteractionCreate, account
 	}
 
 	completionMessage := fmt.Sprintf("Completed checking all %d accounts.", processedCount)
-	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: completionMessage,
-		Flags:   flags,
-	})
+	_, err = services.FollowupWithPreference(s, i, completionMessage, nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to send completion message")
 	}
@@ -499,24 +457,7 @@ func getUserID(i *discordgo.InteractionCreate) (string, error) {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string, forceEphemeral bool) {
-	flags := discordgo.MessageFlags(0)
-	if forceEphemeral {
-		flags = discordgo.MessageFlagsEphemeral
-	} else {
-		if userID, err := getUserID(i); err == nil {
-			if userSettings, err := services.GetUserSettings(userID); err == nil && userSettings.PreferEphemeralResponses {
-				flags = discordgo.MessageFlagsEphemeral
-			}
-		}
-	}
-
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: message,
-			Flags:   flags,
-		},
-	})
+	err := services.RespondWithPreference(s, i, message, nil, forceEphemeral)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}

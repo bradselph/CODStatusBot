@@ -161,12 +161,7 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	logger.Log.Infof("Attempting to add account. Title: %s, SSO Cookie length: %d", title, len(ssoCookie))
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.DeferWithPreference(s, i, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending deferred response")
 		return
@@ -312,21 +307,14 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func sendFollowupMessage(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: content,
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, content, nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}
 }
 
 func sendFollowupMessageWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embed *discordgo.MessageEmbed) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: content,
-		Embeds:  []*discordgo.MessageEmbed{embed},
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, content, []*discordgo.MessageEmbed{embed}, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message with embed")
 	}
@@ -390,13 +378,7 @@ func checkRateLimit(userID string) bool {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: message,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, message, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}

@@ -95,18 +95,9 @@ func CommandHelpApi(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	for partIndex, part := range helpApiGuide {
 		var err error
 		if partIndex == 0 {
-			err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: part,
-					Flags:   discordgo.MessageFlagsEphemeral,
-				},
-			})
+			err = services.RespondWithPreference(s, i, part, nil, false)
 		} else {
-			_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Content: part,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			})
+			_, err = services.FollowupWithPreference(s, i, part, nil, nil, false)
 		}
 
 		if err != nil {

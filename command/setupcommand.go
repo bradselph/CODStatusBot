@@ -35,8 +35,9 @@ func RegisterCommands(s *discordgo.Session) error {
 
 	commands := []*discordgo.ApplicationCommand{
 		{
-			Name:                     "globalannouncement",
-			Description:              "Send a global announcement to all users (Admin only)",
+			Name:        "globalannouncement",
+			Description: "Send a global announcement to all users (Admin only)",
+
 			DMPermission:             BoolPtr(true),
 			DefaultMemberPermissions: Int64Ptr(int64(discordgo.PermissionAdministrator)),
 		},
