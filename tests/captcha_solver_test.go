@@ -3,6 +3,8 @@ package services
 import (
 	"reflect"
 	"testing"
+
+	"github.com/bradselph/CODStatusBot/models"
 )
 
 func Test_cleanupStaleTasks(t *testing.T) {
@@ -555,6 +557,191 @@ func Test_validate2CaptchaKey(t *testing.T) {
 			}
 			if got1 != tt.want1 {
 				t.Errorf("validate2CaptchaKey() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func TestGetFallbackProvider(t *testing.T) {
+	type args struct {
+		primaryProvider string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GetFallbackProvider(tt.args.primaryProvider); got != tt.want {
+				t.Errorf("GetFallbackProvider() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetDefaultCaptchaAPIKey(t *testing.T) {
+	type args struct {
+		provider string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GetDefaultCaptchaAPIKey(tt.args.provider)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetDefaultCaptchaAPIKey() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("GetDefaultCaptchaAPIKey() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSolveCaptchaWithFallback(t *testing.T) {
+	type args struct {
+		userID  string
+		siteKey string
+		pageURL string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		want1   string
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1, err := SolveCaptchaWithFallback(tt.args.userID, tt.args.siteKey, tt.args.pageURL)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SolveCaptchaWithFallback() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("SolveCaptchaWithFallback() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("SolveCaptchaWithFallback() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func Test_tryPrimaryProvider(t *testing.T) {
+	type args struct {
+		userID   string
+		provider string
+		siteKey  string
+		pageURL  string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		want1   string
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1, err := tryPrimaryProvider(tt.args.userID, tt.args.provider, tt.args.siteKey, tt.args.pageURL)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("tryPrimaryProvider() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("tryPrimaryProvider() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("tryPrimaryProvider() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func Test_tryFallbackProvider(t *testing.T) {
+	type args struct {
+		userID           string
+		fallbackProvider string
+		siteKey          string
+		pageURL          string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		want1   string
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1, err := tryFallbackProvider(tt.args.userID, tt.args.fallbackProvider, tt.args.siteKey, tt.args.pageURL)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("tryFallbackProvider() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("tryFallbackProvider() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("tryFallbackProvider() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func Test_getFallbackProviderForUser(t *testing.T) {
+	type args struct {
+		settings models.UserSettings
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getFallbackProviderForUser(tt.args.settings); got != tt.want {
+				t.Errorf("getFallbackProviderForUser() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_getUserFallbackAPIKey(t *testing.T) {
+	type args struct {
+		settings         models.UserSettings
+		fallbackProvider string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getUserFallbackAPIKey(tt.args.settings, tt.args.fallbackProvider); got != tt.want {
+				t.Errorf("getUserFallbackAPIKey() = %v, want %v", got, tt.want)
 			}
 		})
 	}

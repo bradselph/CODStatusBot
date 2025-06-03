@@ -28,6 +28,19 @@ func TestMigrateEphemeralDefaults(t *testing.T) {
 	}
 }
 
+func TestMigrateFallbackDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			MigrateFallbackDefaults()
+		})
+	}
+}
+
 func TestCleanupInvalidTimestamps(t *testing.T) {
 	tests := []struct {
 		name string

@@ -221,3 +221,22 @@ func TestValidateAndGetAccountInfo(t *testing.T) {
 		})
 	}
 }
+
+func Test_notifyUserAboutFallbackUsage(t *testing.T) {
+	type args struct {
+		userID          string
+		primaryProvider string
+		usedProvider    string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notifyUserAboutFallbackUsage(tt.args.userID, tt.args.primaryProvider, tt.args.usedProvider)
+		})
+	}
+}

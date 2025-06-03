@@ -220,3 +220,78 @@ func Test_respondToInteractionWithEmbed(t *testing.T) {
 		})
 	}
 }
+
+func Test_showFallbackSettings(t *testing.T) {
+	type args struct {
+		s *discordgo.Session
+		i *discordgo.InteractionCreate
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			showFallbackSettings(tt.args.s, tt.args.i)
+		})
+	}
+}
+
+func TestHandleFallbackSettingsInteraction(t *testing.T) {
+	type args struct {
+		s *discordgo.Session
+		i *discordgo.InteractionCreate
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			HandleFallbackSettingsInteraction(tt.args.s, tt.args.i)
+		})
+	}
+}
+
+func Test_toggleFallbackEnabled(t *testing.T) {
+	type args struct {
+		s      *discordgo.Session
+		i      *discordgo.InteractionCreate
+		userID string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toggleFallbackEnabled(tt.args.s, tt.args.i, tt.args.userID)
+		})
+	}
+}
+
+func Test_setFallbackProvider(t *testing.T) {
+	type args struct {
+		s        *discordgo.Session
+		i        *discordgo.InteractionCreate
+		userID   string
+		provider string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setFallbackProvider(tt.args.s, tt.args.i, tt.args.userID, tt.args.provider)
+		})
+	}
+}
