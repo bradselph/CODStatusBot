@@ -49,7 +49,11 @@ type UserSettings struct { // User settings for the bot
 	EZCaptchaAPIKey              string               // User's own EZCaptcha API key, if provided
 	TwoCaptchaAPIKey             string               // User's own 2captcha API key, if provided
 	PreferredCaptchaProvider     string               `gorm:"default:'capsolver'"` // 'capsolver', 'ezcaptcha' or '2captcha'
+	FallbackCaptchaProvider      string               `gorm:"default:''"`          // Fallback captcha provider when primary fails
+	EnableFallback               bool                 `gorm:"default:true"`        // Enable fallback captcha when primary fails
+	UseFallbackForDefault        bool                 `gorm:"default:true"`        // Use fallback for default key users
 	CaptchaBalance               float64              // Current balance for the selected provider
+	FallbackCaptchaBalance       float64              // Current balance for the fallback provider
 	LastBalanceCheck             time.Time            // Last time the balance was checked
 	CheckInterval                int                  // the user's set check interval
 	NotificationInterval         float64              // the user's preferred notification interval

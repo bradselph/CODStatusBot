@@ -22,15 +22,20 @@ func initDefaultSettings() {
 		StatusChangeCooldown:     cfg.Intervals.StatusChange,
 		NotificationType:         "channel",
 		PreferredCaptchaProvider: "capsolver",
+		EnableFallback:           true,
+		UseFallbackForDefault:    true,
 		CustomSettings:           false,
 	}
 
 	if cfg.CaptchaService.Capsolver.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "capsolver"
+		defaultSettings.FallbackCaptchaProvider = GetFallbackProvider("capsolver")
 	} else if cfg.CaptchaService.EZCaptcha.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "ezcaptcha"
+		defaultSettings.FallbackCaptchaProvider = GetFallbackProvider("ezcaptcha")
 	} else if cfg.CaptchaService.TwoCaptcha.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "2captcha"
+		defaultSettings.FallbackCaptchaProvider = GetFallbackProvider("2captcha")
 	}
 }
 
@@ -52,6 +57,10 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 
 	if settings.PreferredCaptchaProvider == "" {
 		settings.PreferredCaptchaProvider = "capsolver"
+	}
+
+	if settings.FallbackCaptchaProvider == "" {
+		settings.FallbackCaptchaProvider = GetFallbackProvider(settings.PreferredCaptchaProvider)
 	}
 
 	if settings.LastDailyUpdateNotification.IsZero() {
@@ -78,6 +87,10 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 
 	if settings.PreferredCaptchaProvider == "" {
 		settings.PreferredCaptchaProvider = "capsolver"
+	}
+
+	if settings.FallbackCaptchaProvider == "" {
+		settings.FallbackCaptchaProvider = GetFallbackProvider(settings.PreferredCaptchaProvider)
 	}
 
 	settings.CustomSettings = hasCustomKey
@@ -272,6 +285,9 @@ func RemoveCaptchaKey(userID string) error {
 
 	// Reset to default settings
 	settings.PreferredCaptchaProvider = defaultSettings.PreferredCaptchaProvider
+	settings.FallbackCaptchaProvider = defaultSettings.FallbackCaptchaProvider
+	settings.EnableFallback = defaultSettings.EnableFallback
+	settings.UseFallbackForDefault = defaultSettings.UseFallbackForDefault
 	settings.CustomSettings = false
 	settings.CheckInterval = defaultSettings.CheckInterval
 	settings.NotificationInterval = defaultSettings.NotificationInterval

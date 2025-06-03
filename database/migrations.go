@@ -80,7 +80,36 @@ func RunMigrations() {
 		}
 	}
 
+	if !DB.Migrator().HasColumn(&models.UserSettings{}, "fallback_captcha_provider") {
+		logger.Log.Info("Adding fallback_captcha_provider column to UserSettings table")
+		if err := DB.Exec("ALTER TABLE user_settings ADD COLUMN fallback_captcha_provider VARCHAR(255) DEFAULT ''").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add fallback_captcha_provider column to UserSettings table")
+		}
+	}
+
+	if !DB.Migrator().HasColumn(&models.UserSettings{}, "enable_fallback") {
+		logger.Log.Info("Adding enable_fallback column to UserSettings table")
+		if err := DB.Exec("ALTER TABLE user_settings ADD COLUMN enable_fallback BOOLEAN DEFAULT TRUE").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add enable_fallback column to UserSettings table")
+		}
+	}
+
+	if !DB.Migrator().HasColumn(&models.UserSettings{}, "use_fallback_for_default") {
+		logger.Log.Info("Adding use_fallback_for_default column to UserSettings table")
+		if err := DB.Exec("ALTER TABLE user_settings ADD COLUMN use_fallback_for_default BOOLEAN DEFAULT TRUE").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add use_fallback_for_default column to UserSettings table")
+		}
+	}
+
+	if !DB.Migrator().HasColumn(&models.UserSettings{}, "fallback_captcha_balance") {
+		logger.Log.Info("Adding fallback_captcha_balance column to UserSettings table")
+		if err := DB.Exec("ALTER TABLE user_settings ADD COLUMN fallback_captcha_balance DOUBLE DEFAULT 0").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add fallback_captcha_balance column to UserSettings table")
+		}
+	}
+
 	MigrateEphemeralDefaults()
+	MigrateFallbackDefaults()
 }
 
 func MigrateEphemeralDefaults() {
@@ -99,6 +128,42 @@ func MigrateEphemeralDefaults() {
 			logger.Log.WithError(result.Error).Error("Failed to migrate users to ephemeral default")
 		} else {
 			logger.Log.Infof("Successfully migrated %d users to ephemeral default", result.RowsAffected)
+		}
+	}
+}
+
+func MigrateFallbackDefaults() {
+	logger.Log.Info("Running fallback defaults migration")
+
+	var count int64
+	if err := DB.Model(&models.UserSettings{}).Where("enable_fallback IS NULL").Count(&count).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count users needing fallback migration")
+		return
+	}
+
+	if count > 0 {
+		logger.Log.Infof("Migrating %d users to enable fallback by default", count)
+		result := DB.Model(&models.UserSettings{}).Where("enable_fallback IS NULL").Update("enable_fallback", true)
+		if result.Error != nil {
+			logger.Log.WithError(result.Error).Error("Failed to migrate users to fallback default")
+		} else {
+			logger.Log.Infof("Successfully migrated %d users to fallback default", result.RowsAffected)
+		}
+	}
+
+	var defaultCount int64
+	if err := DB.Model(&models.UserSettings{}).Where("use_fallback_for_default IS NULL").Count(&defaultCount).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count users needing default fallback migration")
+		return
+	}
+
+	if defaultCount > 0 {
+		logger.Log.Infof("Migrating %d users to enable default fallback", defaultCount)
+		result := DB.Model(&models.UserSettings{}).Where("use_fallback_for_default IS NULL").Update("use_fallback_for_default", true)
+		if result.Error != nil {
+			logger.Log.WithError(result.Error).Error("Failed to migrate users to default fallback setting")
+		} else {
+			logger.Log.Infof("Successfully migrated %d users to default fallback setting", result.RowsAffected)
 		}
 	}
 }
