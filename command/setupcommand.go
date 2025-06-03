@@ -151,6 +151,8 @@ func RegisterCommands(s *discordgo.Session) error {
 	Handlers["set_fallback_ezcaptcha"] = setcaptchaservice.HandleFallbackSettingsInteraction
 	Handlers["set_fallback_2captcha"] = setcaptchaservice.HandleFallbackSettingsInteraction
 	Handlers["captcha_main_menu"] = setcaptchaservice.HandleFallbackSettingsInteraction
+	Handlers["dismiss_fallback_notice"] = setcaptchaservice.HandleFallbackNoticeInteraction
+	Handlers["set_captcha_from_notice"] = setcaptchaservice.HandleFallbackNoticeInteraction
 
 	Handlers["checkcaptchabalance"] = checkcaptchabalance.CommandCheckCaptchaBalance
 	Handlers["globalannouncement"] = globalannouncement.CommandGlobalAnnouncement

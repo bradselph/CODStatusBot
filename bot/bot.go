@@ -182,6 +182,10 @@ func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate
 		listaccounts.CommandListAccounts(s, i)
 	case strings.HasPrefix(customID, "set_captcha_"):
 		setcaptchaservice.HandleCaptchaServiceSelection(s, i)
+	case customID == "toggle_fallback_enabled" || strings.HasPrefix(customID, "set_fallback_") || customID == "captcha_main_menu":
+		setcaptchaservice.HandleFallbackSettingsInteraction(s, i)
+	case customID == "dismiss_fallback_notice" || customID == "set_captcha_from_notice":
+		setcaptchaservice.HandleFallbackNoticeInteraction(s, i)
 	case strings.HasPrefix(customID, "feedback_"):
 		feedback.HandleFeedbackChoice(s, i)
 	case strings.HasPrefix(customID, "set_ephemeral_"):

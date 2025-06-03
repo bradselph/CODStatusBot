@@ -52,6 +52,7 @@ type UserSettings struct { // User settings for the bot
 	FallbackCaptchaProvider      string               `gorm:"default:''"`          // Fallback captcha provider when primary fails
 	EnableFallback               bool                 `gorm:"default:true"`        // Enable fallback captcha when primary fails
 	UseFallbackForDefault        bool                 `gorm:"default:true"`        // Use fallback for default key users
+	HasSeenFallbackNotice        bool                 `gorm:"default:false"`       // User has seen and dismissed fallback usage notice
 	CaptchaBalance               float64              // Current balance for the selected provider
 	FallbackCaptchaBalance       float64              // Current balance for the fallback provider
 	LastBalanceCheck             time.Time            // Last time the balance was checked

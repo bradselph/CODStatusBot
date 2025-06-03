@@ -670,6 +670,10 @@ func notifyUserAboutFallbackUsage(userID, primaryProvider, usedProvider string) 
 		return
 	}
 
+	if settings.HasSeenFallbackNotice {
+		return
+	}
+
 	lastNotificationKey := fmt.Sprintf("fallback_used_%s", usedProvider)
 	settings.EnsureMapsInitialized()
 
@@ -733,7 +737,29 @@ func notifyUserAboutFallbackUsage(userID, primaryProvider, usedProvider string) 
 		})
 	}
 
-	if err := SendNotification(nil, account, embed, "", "fallback_usage_notice"); err != nil {
-		logger.Log.WithError(err).Error("Failed to send fallback usage notification")
+	components := []discordgo.MessageComponent{
+		discordgo.Button{
+			Label:    "Don't Show This Again",
+			Style:    discordgo.SecondaryButton,
+			CustomID: "dismiss_fallback_notice",
+		},
+		discordgo.Button{
+			Label:    "Set Up My Own Key",
+			Style:    discordgo.PrimaryButton,
+			CustomID: "set_captcha_from_notice",
+		},
+	}
+
+	if err := SendNotificationWithComponentsV2(nil, account, embed, "", "fallback_usage_notice", components); err != nil {
+		/*
+			traditionalComponents := []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: components,
+				},
+			}
+			if err := SendNotificationWithComponents(nil, account, embed, "", "fallback_usage_notice", traditionalComponents); err != nil {
+				logger.Log.WithError(err).Error("Failed to send fallback usage notification")
+			}
+		*/
 	}
 }

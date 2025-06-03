@@ -570,6 +570,87 @@ func SendNotification(s *discordgo.Session, account models.Account, embed *disco
 	return nil
 }
 
+func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Account, embed *discordgo.MessageEmbed, content, notificationType string, components []discordgo.MessageComponent) error {
+	if !globalLimiter.CanSendNotification(account.UserID, notificationType) {
+		storeSuppressedNotification(account.UserID, notificationType, embed, content)
+		logger.Log.WithFields(logrus.Fields{
+			"userID":           account.UserID,
+			"accountTitle":     account.Title,
+			"notificationType": notificationType,
+		}).Debug("Notification suppressed due to rate limiting")
+		return nil
+	}
+
+	userSettings, err := GetUserSettings(account.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get user settings: %w", err)
+	}
+
+	if userSettings.IsUnreachable {
+		cfg := configuration.Get()
+		if time.Since(userSettings.UnreachableSince) < cfg.Users.UnreachableResetPeriod {
+			logger.Log.Debugf("Skipping notification to unreachable user %s", account.UserID)
+			return nil
+		}
+		userSettings.IsUnreachable = false
+		userSettings.MessageFailures = 0
+		if err := database.DB.Save(&userSettings).Error; err != nil {
+			logger.Log.WithError(err).Error("Error resetting user reachability status")
+		}
+	}
+
+	now := time.Now()
+	lastNotification := userSettings.LastCommandTimes[notificationType]
+	cooldownDuration := GetCooldownDuration(userSettings, notificationType, getDefaultCooldown())
+	if !lastNotification.IsZero() && now.Sub(lastNotification) < cooldownDuration {
+		logger.Log.Infof("Skipping %s notification for user %s (cooldown)", notificationType, account.UserID)
+		return nil
+	}
+
+	channelID, err := GetNotificationChannel(s, account, userSettings)
+	if err != nil {
+		if userSettings.NotificationType == "dm" {
+			channel, dmErr := s.UserChannelCreate(account.UserID)
+			if dmErr != nil {
+				return fmt.Errorf("failed to create DM channel: %w", dmErr)
+			}
+			channelID = channel.ID
+		} else {
+			return fmt.Errorf("failed to get notification channel: %w", err)
+		}
+	}
+
+	// Try Components v2 first with IS_COMPONENTS_V2 flag
+	message := &discordgo.MessageSend{
+		Embed:      embed,
+		Content:    content,
+		Components: components, // Direct component array - no ActionRows needed in v2
+		Flags:      32768,      // IS_COMPONENTS_V2 flag
+	}
+
+	_, err = s.ChannelMessageSendComplex(channelID, message)
+
+	success := err == nil
+	LogNotification(account.UserID, account.ID, notificationType, success)
+
+	if err != nil {
+		TrackMessageFailure(account.UserID, err.Error())
+		return fmt.Errorf("failed to send message with Components v2: %w", err)
+	}
+
+	userSettings.LastCommandTimes[notificationType] = now
+	if err := database.DB.Save(&userSettings).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to update notification timestamp")
+	}
+
+	account.LastNotification = now.Unix()
+	if err := database.DB.Save(&account).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to update account last notification")
+	}
+
+	return nil
+}
+
 func storeSuppressedNotification(userID, notificationType string, embed *discordgo.MessageEmbed, content string) {
 	userNotificationMutex.Lock()
 	defer userNotificationMutex.Unlock()

@@ -294,14 +294,26 @@ func showFallbackSettings(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 	var components []discordgo.MessageComponent
 
+	currentFallback := "Auto (" + services.GetFallbackProvider(settings.PreferredCaptchaProvider) + ")"
+	if settings.FallbackCaptchaProvider != "" {
+		currentFallback = providerLabels[settings.FallbackCaptchaProvider]
+	}
+
+	fallbackStatus := "Disabled"
+	if settings.EnableFallback {
+		fallbackStatus = "Enabled"
+	}
+
 	enabledLabel := "Enable Fallback"
+	enabledStyle := discordgo.PrimaryButton
 	if settings.EnableFallback {
 		enabledLabel = "Disable Fallback"
+		enabledStyle = discordgo.SecondaryButton
 	}
 
 	components = append(components, discordgo.Button{
 		Label:    enabledLabel,
-		Style:    discordgo.PrimaryButton,
+		Style:    enabledStyle,
 		CustomID: "toggle_fallback_enabled",
 	})
 
@@ -336,56 +348,46 @@ func showFallbackSettings(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		CustomID: "captcha_main_menu",
 	})
 
-	fallbackComponents := []discordgo.MessageComponent{
-		discordgo.ActionsRow{Components: components[:4]},
-	}
-
-	if len(components) > 4 {
-		fallbackComponents = append(fallbackComponents, discordgo.ActionsRow{Components: components[4:]})
-	}
-
-	fallbackStatus := "Disabled"
-	if settings.EnableFallback {
-		fallbackStatus = "Enabled"
-	}
-
-	currentFallback := "Auto (" + services.GetFallbackProvider(settings.PreferredCaptchaProvider) + ")"
-	if settings.FallbackCaptchaProvider != "" {
-		currentFallback = providerLabels[settings.FallbackCaptchaProvider]
-	}
-
 	embed := &discordgo.MessageEmbed{
-		Title:       "Fallback Captcha Settings",
-		Description: "Configure fallback options for when your primary captcha service fails.",
-		Color:       0x0099ff,
+		Title:       "🔄 Fallback Captcha Settings",
+		Description: "Configure automatic fallback when your primary captcha service fails.",
+		Color:       0x00D4AA,
 		Fields: []*discordgo.MessageEmbedField{
 			{
-				Name:   "Primary Provider",
-				Value:  providerLabels[settings.PreferredCaptchaProvider],
-				Inline: true,
+				Name:   "📊 Current Configuration",
+				Value:  fmt.Sprintf("**Primary:** %s\n**Fallback:** %s\n**Status:** %s", providerLabels[settings.PreferredCaptchaProvider], currentFallback, fallbackStatus),
+				Inline: false,
 			},
 			{
-				Name:   "Fallback Status",
-				Value:  fallbackStatus,
-				Inline: true,
+				Name:   "💡 How It Works",
+				Value:  "When your primary service fails, the bot automatically tries the fallback service. This improves reliability and reduces failed checks.",
+				Inline: false,
 			},
 			{
-				Name:   "Current Fallback",
-				Value:  currentFallback,
-				Inline: true,
-			},
-			{
-				Name:   "How It Works",
-				Value:  "When your primary captcha service fails, the bot will automatically try the fallback service. This improves reliability and reduces failed checks.",
+				Name:   "⚙️ Benefits",
+				Value:  "• Higher success rate\n• Automatic failover\n• No manual intervention needed\n• Better uptime for checks",
 				Inline: false,
 			},
 		},
 		Timestamp: time.Now().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "Components v2 • No ActionRow limits",
+		},
 	}
 
-	err = services.RespondWithPreferenceAndComponents(s, i, "", []*discordgo.MessageEmbed{embed}, fallbackComponents, false)
+	response := &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Embeds:     []*discordgo.MessageEmbed{embed},
+			Components: components,
+			Flags:      32768,
+		},
+	}
+
+	err = s.InteractionRespond(i.Interaction, response)
 	if err != nil {
-		logger.Log.WithError(err).Error("Error responding with fallback settings")
+		logger.Log.WithError(err).Error("Error responding with fallback settings (Components v2)")
+		fallbackToTraditional(s, i, embed, components)
 	}
 }
 
@@ -455,4 +457,66 @@ func setFallbackProvider(s *discordgo.Session, i *discordgo.InteractionCreate, u
 	}
 
 	respondToInteraction(s, i, fmt.Sprintf("Fallback provider set to %s.", providerLabels[provider]))
+}
+
+func HandleFallbackNoticeInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	customID := i.MessageComponentData().CustomID
+	userID, err := services.GetUserID(i)
+	if err != nil {
+		respondToInteraction(s, i, "An error occurred while processing your request.")
+		return
+	}
+
+	switch customID {
+	case "dismiss_fallback_notice":
+		dismissFallbackNotice(s, i, userID)
+	case "set_captcha_from_notice":
+		CommandSetCaptchaService(s, i)
+	default:
+		respondToInteraction(s, i, "Unknown action.")
+	}
+}
+
+func dismissFallbackNotice(s *discordgo.Session, i *discordgo.InteractionCreate, userID string) {
+	settings, err := services.GetUserSettings(userID)
+	if err != nil {
+		respondToInteraction(s, i, "Failed to get your current settings.")
+		return
+	}
+
+	settings.HasSeenFallbackNotice = true
+
+	if err := database.DB.Save(&settings).Error; err != nil {
+		respondToInteraction(s, i, "Failed to update your settings.")
+		return
+	}
+
+	respondToInteraction(s, i, "You will no longer receive fallback service notifications. You can still configure fallback settings using /setcaptchaservice.")
+}
+
+func fallbackToTraditional(s *discordgo.Session, i *discordgo.InteractionCreate, embed *discordgo.MessageEmbed, components []discordgo.MessageComponent) {
+	logger.Log.Info("Falling back to traditional ActionRow method")
+
+	var actionRows []discordgo.MessageComponent
+	for idx := 0; idx < len(components); idx += 5 {
+		end := idx + 5
+		if end > len(components) {
+			end = len(components)
+		}
+		actionRows = append(actionRows, discordgo.ActionsRow{
+			Components: components[idx:end],
+		})
+	}
+
+	response := &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Embeds:     []*discordgo.MessageEmbed{embed},
+			Components: actionRows,
+		},
+	}
+
+	if err := s.InteractionRespond(i.Interaction, response); err != nil {
+		logger.Log.WithError(err).Error("Failed traditional fallback method too")
+	}
 }

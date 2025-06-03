@@ -108,6 +108,13 @@ func RunMigrations() {
 		}
 	}
 
+	if !DB.Migrator().HasColumn(&models.UserSettings{}, "has_seen_fallback_notice") {
+		logger.Log.Info("Adding has_seen_fallback_notice column to UserSettings table")
+		if err := DB.Exec("ALTER TABLE user_settings ADD COLUMN has_seen_fallback_notice BOOLEAN DEFAULT FALSE").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add has_seen_fallback_notice column to UserSettings table")
+		}
+	}
+
 	MigrateEphemeralDefaults()
 	MigrateFallbackDefaults()
 }
