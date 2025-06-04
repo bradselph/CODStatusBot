@@ -145,7 +145,7 @@ func GetCooldownDuration(userSettings models.UserSettings, notificationType stri
 	case "daily_update":
 		return time.Duration(cfg.Intervals.Notification) * time.Hour
 	case "invalid_cookie", "cookie_expiring_soon":
-		return time.Duration(cfg.Intervals.CookieExpiration) * time.Hour
+		return time.Duration(cfg.ErrorHandling.CookieExpirationWarningHours) * time.Hour
 	default:
 		if config, exists := notificationConfigs[notificationType]; exists {
 			return config.Cooldown
@@ -620,12 +620,55 @@ func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Accou
 		}
 	}
 
-	// Try Components v2 first with IS_COMPONENTS_V2 flag
+	cfg := configuration.Get()
+
+	if cfg.ComponentsV2.Enabled && len(components) > 0 {
+		message := &discordgo.MessageSend{
+			Embed:      embed,
+			Content:    content,
+			Components: components,
+			Flags:      discordgo.MessageFlags(cfg.ComponentsV2.Flag),
+		}
+
+		_, err = s.ChannelMessageSendComplex(channelID, message)
+		if err == nil {
+			success := true
+			LogNotification(account.UserID, account.ID, notificationType, success)
+
+			userSettings.LastCommandTimes[notificationType] = now
+			if err := database.DB.Save(&userSettings).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to update notification timestamp")
+			}
+
+			account.LastNotification = now.Unix()
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to update account last notification")
+			}
+
+			return nil
+		}
+
+		logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
+	}
+
+	var wrappedComponents []discordgo.MessageComponent
+	if len(components) > 0 {
+		for i := 0; i < len(components); i += 5 {
+			end := i + 5
+			if end > len(components) {
+				end = len(components)
+			}
+			row := discordgo.ActionsRow{
+				Components: components[i:end],
+			}
+			wrappedComponents = append(wrappedComponents, row)
+		}
+	}
+
 	message := &discordgo.MessageSend{
 		Embed:      embed,
 		Content:    content,
-		Components: components, // Direct component array - no ActionRows needed in v2
-		Flags:      32768,      // IS_COMPONENTS_V2 flag
+		Components: wrappedComponents,
 	}
 
 	_, err = s.ChannelMessageSendComplex(channelID, message)
@@ -635,7 +678,7 @@ func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Accou
 
 	if err != nil {
 		TrackMessageFailure(account.UserID, err.Error())
-		return fmt.Errorf("failed to send message with Components v2: %w", err)
+		return fmt.Errorf("failed to send message: %w", err)
 	}
 
 	userSettings.LastCommandTimes[notificationType] = now
@@ -940,12 +983,12 @@ func checkAccountsNeedingAttention(s *discordgo.Session, accounts []models.Accou
 			timeUntilExpiration, err := CheckSSOCookieExpiration(account.SSOCookieExpiration)
 			if err != nil {
 				errorAccounts = append(errorAccounts, account)
-			} else if timeUntilExpiration <= time.Duration(cfg.Intervals.CookieExpiration)*time.Hour {
+			} else if timeUntilExpiration <= time.Duration(cfg.ErrorHandling.CookieExpirationWarningHours)*time.Hour {
 				expiringAccounts = append(expiringAccounts, account)
 			}
 		}
 
-		if account.ConsecutiveErrors >= cfg.CaptchaService.MaxRetries {
+		if account.ConsecutiveErrors >= cfg.ErrorHandling.MaxConsecutiveErrors {
 			errorAccounts = append(errorAccounts, account)
 		}
 	}
@@ -956,7 +999,7 @@ func checkAccountsNeedingAttention(s *discordgo.Session, accounts []models.Accou
 		}
 	}
 
-	if len(errorAccounts) > 0 && time.Since(userSettings.LastErrorNotification) >= time.Hour*6 {
+	if len(errorAccounts) > 0 && time.Since(userSettings.LastErrorNotification) >= time.Duration(cfg.ErrorHandling.ErrorNotificationCooldownHours)*time.Hour {
 		notifyAccountErrors(s, errorAccounts, userSettings)
 	}
 }
@@ -979,7 +1022,7 @@ func notifyAccountErrors(s *discordgo.Session, errorAccounts []models.Account, u
 		var errorDescription string
 		if account.IsCheckDisabled {
 			errorDescription = fmt.Sprintf("Checks disabled - Reason: %s", account.DisabledReason)
-		} else if account.ConsecutiveErrors >= cfg.CaptchaService.MaxRetries {
+		} else if account.ConsecutiveErrors >= cfg.ErrorHandling.MaxConsecutiveErrors {
 			errorDescription = fmt.Sprintf("Multiple check failures - Last error time: %s",
 				account.LastErrorTime.Format("2006-01-02 15:04:05"))
 		} else {

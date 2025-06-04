@@ -21,10 +21,21 @@ func CommandSetNotifications(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 
 	var userSettings models.UserSettings
-	if err := database.DB.Where("user_id = ?", userID).FirstOrCreate(&userSettings).Error; err != nil {
-		logger.Log.WithError(err).Error("Error getting user settings")
+	result := database.DB.Where("user_id = ?", userID).FirstOrCreate(&userSettings)
+	if result.Error != nil {
+		logger.Log.WithError(result.Error).Error("Error getting user settings")
 		respondToInteraction(s, i, "Error retrieving your current settings. Please try again.")
 		return
+	}
+
+	if result.RowsAffected > 0 {
+		userSettings.EnsureMapsInitialized()
+		if userSettings.NotificationType == "" {
+			userSettings.NotificationType = "channel"
+		}
+		if err := database.DB.Save(&userSettings).Error; err != nil {
+			logger.Log.WithError(err).Error("Error saving default user settings")
+		}
 	}
 
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -60,16 +71,22 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	parts := strings.Split(data.CustomID, "_")
 	if len(parts) < 4 {
-		logger.Log.Error("Invalid modal custom ID format")
+		logger.Log.WithField("customID", data.CustomID).Error("Invalid modal custom ID format")
 		respondToInteraction(s, i, "An error occurred while processing your request.")
 		return
 	}
 	userID := parts[len(parts)-1]
 
 	interactionUserID := getUserID(i)
-	if interactionUserID == "" || interactionUserID != userID {
-		logger.Log.Error("User ID mismatch or not found")
+	if interactionUserID == "" {
+		logger.Log.Error("Could not determine interaction user ID")
 		respondToInteraction(s, i, "An error occurred while processing your request.")
+		return
+	}
+
+	if interactionUserID != userID {
+		logger.Log.WithField("interactionUserID", interactionUserID).WithField("expectedUserID", userID).Error("User ID mismatch")
+		respondToInteraction(s, i, "You are not authorized to modify these settings.")
 		return
 	}
 
@@ -79,22 +96,43 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			for _, rowComp := range row.Components {
 				if textInput, ok := rowComp.(*discordgo.TextInput); ok {
 					if textInput.CustomID == "notification_type" {
-						notificationType = strings.ToLower(utils.SanitizeInput(textInput.Value))
+						input := utils.SanitizeInput(textInput.Value)
+						notificationType = strings.ToLower(strings.TrimSpace(input))
 					}
 				}
 			}
 		}
 	}
 
-	if notificationType != "channel" && notificationType != "dm" {
+	if notificationType == "" {
+		respondToInteraction(s, i, "Please enter a notification type.")
+		return
+	}
+
+	switch notificationType {
+	case "channel", "ch", "guild", "server":
+		notificationType = "channel"
+	case "dm", "direct", "private", "dms":
+		notificationType = "dm"
+	default:
 		respondToInteraction(s, i, "Invalid notification type. Please enter 'channel' or 'dm'.")
 		return
 	}
 
 	var userSettings models.UserSettings
-	if err := database.DB.Where("user_id = ?", userID).FirstOrCreate(&userSettings).Error; err != nil {
-		logger.Log.WithError(err).Error("Error getting/creating user settings")
+	result := database.DB.Where("user_id = ?", userID).FirstOrCreate(&userSettings)
+	if result.Error != nil {
+		logger.Log.WithError(result.Error).Error("Error getting/creating user settings")
 		respondToInteraction(s, i, "Error updating settings. Please try again.")
+		return
+	}
+
+	if result.RowsAffected > 0 {
+		userSettings.EnsureMapsInitialized()
+	}
+
+	if userSettings.NotificationType == notificationType {
+		respondToInteraction(s, i, fmt.Sprintf("Your notification type is already set to %s.", notificationType))
 		return
 	}
 
@@ -105,20 +143,28 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	result := database.DB.Model(&models.Account{}).
+	accountResult := database.DB.Model(&models.Account{}).
 		Where("user_id = ?", userID).
 		Updates(map[string]interface{}{
 			"notification_type": notificationType,
 		})
 
-	if result.Error != nil {
-		logger.Log.WithError(result.Error).Error("Error updating user accounts")
-		respondToInteraction(s, i, "Error updating accounts with new settings. Please try again.")
-		return
+	if accountResult.Error != nil {
+		logger.Log.WithError(accountResult.Error).Error("Error updating user accounts")
+		logger.Log.Warn("User notification type updated but account updates failed")
 	}
 
-	logger.Log.Infof("Updated notification preferences for user %s to %s", userID, notificationType)
-	message := fmt.Sprintf("Your notification preferences have been updated. You will now receive notifications via %s.", notificationType)
+	accountsUpdated := accountResult.RowsAffected
+	logger.Log.Infof("Updated notification preferences for user %s to %s (%d accounts updated)", userID, notificationType, accountsUpdated)
+
+	message := fmt.Sprintf("Your notification preferences have been updated to **%s**.\n", notificationType)
+	if accountsUpdated > 0 {
+		message += fmt.Sprintf("Updated %d account(s) with new notification settings.", accountsUpdated)
+	} else {
+		message += "No accounts found to update - your new setting will apply to future accounts."
+	}
+
+	message = services.ValidateMessageLimits(message)
 	respondToInteraction(s, i, message)
 }
 

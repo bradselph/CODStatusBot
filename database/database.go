@@ -104,6 +104,23 @@ func Databaselogin() error {
 	return nil
 }
 
+func CheckConnection() error {
+	if DB == nil {
+		return errors.New("database connection is nil")
+	}
+
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get database instance: %w", err)
+	}
+
+	if err := sqlDB.Ping(); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
+	return nil
+}
+
 func CloseConnection() error {
 	if DB != nil {
 		sqlDB, err := DB.DB()

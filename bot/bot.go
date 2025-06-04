@@ -67,6 +67,12 @@ func StartBot() (*discordgo.Session, error) {
 	logger.Log.Info("Registering global commands")
 
 	discord.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		defer services.RecoverFromPanic("interaction_handler")
+
+		if err := services.ValidateInteractionContext(i); err != nil {
+			logger.Log.WithError(err).Error("Invalid interaction context")
+			return
+		}
 		if i.GuildID != "" {
 			appShardManager := services.GetAppShardManager()
 			if !appShardManager.GuildBelongsToInstance(i.GuildID) {
@@ -151,7 +157,11 @@ func getUserIDFromInteraction(i *discordgo.InteractionCreate) string {
 }
 
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	defer services.RecoverFromPanic("handleModalSubmit")
+
 	customID := i.ModalSubmitData().CustomID
+	logger.Log.WithField("customID", customID).Debug("Handling modal submit")
+
 	switch {
 	case strings.HasPrefix(customID, "set_notifications_modal_"):
 		setnotifications.HandleModalSubmit(s, i)
@@ -172,11 +182,18 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		verdansk.HandleActivisionIDModal(s, i)
 	default:
 		logger.Log.WithField("customID", customID).Error("Unknown modal submission")
+		if err := services.RespondWithPreference(s, i, "Unknown modal submission. Please try again.", nil, true); err != nil {
+			logger.Log.WithError(err).Error("Failed to respond to unknown modal")
+		}
 	}
 }
 
 func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	defer services.RecoverFromPanic("handleMessageComponent")
+
 	customID := i.MessageComponentData().CustomID
+	logger.Log.WithField("customID", customID).Debug("Handling message component")
+
 	switch {
 	case customID == "listaccounts":
 		listaccounts.CommandListAccounts(s, i)
@@ -216,5 +233,8 @@ func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate
 		verdansk.HandleAccountSelection(s, i)
 	default:
 		logger.Log.WithField("customID", customID).Error("Unknown message component interaction")
+		if err := services.RespondWithPreference(s, i, "Unknown interaction. Please try again.", nil, true); err != nil {
+			logger.Log.WithError(err).Error("Failed to respond to unknown component")
+		}
 	}
 }

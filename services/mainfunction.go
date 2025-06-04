@@ -17,10 +17,13 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// TODO: Remove old constants uses cfg now
+/*
 const (
-	maxConsecutiveErrors    = 5
-	cookieExpirationWarning = 24
+	_            = 5  // maxConsecutiveErrors (use cfg.ErrorHandling.MaxConsecutiveErrors)
+	_            = 24 // cookieExpirationWarning (use cfg.ErrorHandling.CookieExpirationWarningHours)
 )
+*/
 
 var (
 	DBMutex sync.Mutex

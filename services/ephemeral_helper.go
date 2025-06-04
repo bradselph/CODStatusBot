@@ -1,6 +1,7 @@
 package services
 
 import (
+	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/models"
 	"github.com/bwmarrin/discordgo"
@@ -54,6 +55,11 @@ func RespondWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate,
 
 func RespondWithPreferenceAndComponents(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embeds []*discordgo.MessageEmbed, components []discordgo.MessageComponent, forceEphemeral bool) error {
 	flags := GetInteractionFlags(i, forceEphemeral)
+	cfg := configuration.Get()
+
+	if cfg.ComponentsV2.Enabled && len(components) > 0 {
+		flags |= discordgo.MessageFlags(cfg.ComponentsV2.Flag)
+	}
 
 	responseData := &discordgo.InteractionResponseData{
 		Flags: flags,
@@ -68,7 +74,22 @@ func RespondWithPreferenceAndComponents(s *discordgo.Session, i *discordgo.Inter
 	}
 
 	if len(components) > 0 {
-		responseData.Components = components
+		if cfg.ComponentsV2.Enabled {
+			responseData.Components = components
+		} else {
+			var wrappedComponents []discordgo.MessageComponent
+			for i := 0; i < len(components); i += 5 {
+				end := i + 5
+				if end > len(components) {
+					end = len(components)
+				}
+				row := discordgo.ActionsRow{
+					Components: components[i:end],
+				}
+				wrappedComponents = append(wrappedComponents, row)
+			}
+			responseData.Components = wrappedComponents
+		}
 	}
 
 	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -90,6 +111,11 @@ func DeferWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate, f
 
 func FollowupWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embeds []*discordgo.MessageEmbed, components []discordgo.MessageComponent, forceEphemeral bool) (*discordgo.Message, error) {
 	flags := GetInteractionFlags(i, forceEphemeral)
+	cfg := configuration.Get()
+
+	if cfg.ComponentsV2.Enabled && len(components) > 0 {
+		flags |= discordgo.MessageFlags(cfg.ComponentsV2.Flag)
+	}
 
 	params := &discordgo.WebhookParams{
 		Flags: flags,
@@ -104,14 +130,34 @@ func FollowupWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 
 	if len(components) > 0 {
-		params.Components = components
+		if cfg.ComponentsV2.Enabled {
+			params.Components = components
+		} else {
+			var wrappedComponents []discordgo.MessageComponent
+			for i := 0; i < len(components); i += 5 {
+				end := i + 5
+				if end > len(components) {
+					end = len(components)
+				}
+				row := discordgo.ActionsRow{
+					Components: components[i:end],
+				}
+				wrappedComponents = append(wrappedComponents, row)
+			}
+			params.Components = wrappedComponents
+		}
 	}
 
 	return s.FollowupMessageCreate(i.Interaction, true, params)
 }
 
 func UpdateMessageWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embeds []*discordgo.MessageEmbed, components []discordgo.MessageComponent) error {
+	cfg := configuration.Get()
 	responseData := &discordgo.InteractionResponseData{}
+
+	if cfg.ComponentsV2.Enabled && len(components) > 0 {
+		responseData.Flags = discordgo.MessageFlags(cfg.ComponentsV2.Flag)
+	}
 
 	if content != "" {
 		responseData.Content = content
@@ -122,11 +168,63 @@ func UpdateMessageWithPreference(s *discordgo.Session, i *discordgo.InteractionC
 	}
 
 	if components != nil {
-		responseData.Components = components
+		if cfg.ComponentsV2.Enabled {
+			responseData.Components = components
+		} else {
+			var wrappedComponents []discordgo.MessageComponent
+			for i := 0; i < len(components); i += 5 {
+				end := i + 5
+				if end > len(components) {
+					end = len(components)
+				}
+				row := discordgo.ActionsRow{
+					Components: components[i:end],
+				}
+				wrappedComponents = append(wrappedComponents, row)
+			}
+			responseData.Components = wrappedComponents
+		}
 	}
 
 	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseUpdateMessage,
 		Data: responseData,
 	})
+}
+
+func ValidateEmbedLimits(embed *discordgo.MessageEmbed) *discordgo.MessageEmbed {
+	cfg := configuration.Get()
+
+	if embed == nil {
+		return embed
+	}
+
+	if len(embed.Description) > cfg.Message.EmbedDescLimit {
+		embed.Description = embed.Description[:cfg.Message.EmbedDescLimit-3] + "..."
+	}
+
+	if len(embed.Fields) > cfg.Message.MaxEmbedFields {
+		embed.Fields = embed.Fields[:cfg.Message.MaxEmbedFields]
+	}
+
+	for i, field := range embed.Fields {
+		if len(field.Value) > 1024 {
+			embed.Fields[i].Value = field.Value[:1021] + "..."
+		}
+		if len(field.Name) > 256 {
+			embed.Fields[i].Name = field.Name[:253] + "..."
+		}
+	}
+
+	return embed
+}
+
+func ValidateMessageLimits(content string) string {
+	cfg := configuration.Get()
+
+	if len(content) > cfg.Message.MaxLength {
+		return content[:cfg.Message.MaxLength-3] + "..."
+	}
+
+	return content
 }

@@ -186,11 +186,48 @@ type Config struct {
 		QuestionCircle string
 	}
 
+	//TODO: Remove completely
 	// Sentry Settings
 	Sentry struct {
 		DSN              string
 		TracesSampleRate float64
 		Debug            bool
+	}
+
+	// Components v2 Settings
+	ComponentsV2 struct {
+		Enabled bool
+		Flag    int //TODO: Remove if possible
+	}
+
+	// Error Handling Settings
+	ErrorHandling struct {
+		MaxConsecutiveErrors           int
+		CookieExpirationWarningHours   int
+		AccountErrorThreshold          int
+		ErrorNotificationCooldownHours int
+	}
+
+	// Startup Settings
+	Startup struct {
+		TimeoutSeconds      int
+		ShutdownTimeout     time.Duration
+		HealthCheckInterval time.Duration
+	}
+
+	// Message Settings
+	Message struct {
+		MaxLength        int
+		MaxEmbedFields   int
+		MaxComponentRows int
+		EmbedDescLimit   int
+	}
+
+	// Fallback Settings
+	Fallback struct {
+		TimeoutSeconds    int
+		RetryAttempts     int
+		BackoffMultiplier float64
 	}
 }
 
@@ -220,6 +257,7 @@ func Load() error {
 	AppConfig.Discord.ClientID = os.Getenv("DISCORD_CLIENT_ID")
 	AppConfig.Discord.PublicKey = os.Getenv("DISCORD_PUBLIC_KEY")
 
+	loadStartupConfig()
 	loadAdminConfig()
 	loadCaptchaConfig()
 	loadAPIEndpoints()
@@ -233,7 +271,11 @@ func Load() error {
 	loadShardingConfig()
 	loadProxyConfig()
 	loadRateLimitConfig()
-	loadSentryConfig()
+	loadSentryConfig() //TODO: Remove if possible
+	loadComponentsV2Config()
+	loadErrorHandlingConfig()
+	loadMessageConfig()
+	loadFallbackConfig()
 
 	if err := validate(); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
@@ -382,10 +424,7 @@ func loadProxyConfig() {
 	} else {
 		AppConfig.Proxy.UserAgents = []string{
 			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
 			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.2623.71",
-			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
 		}
 	}
 }
@@ -623,4 +662,37 @@ func loadShardingConfig() {
 	} else {
 		logger.Log.Info("Sharding disabled: Running in single instance mode")
 	}
+}
+
+func loadComponentsV2Config() {
+	AppConfig.ComponentsV2.Enabled = getEnvAsBool("COMPONENTS_V2_ENABLED", true)
+	AppConfig.ComponentsV2.Flag = getEnvAsInt("COMPONENTS_V2_FLAG", 32768) //TODO: Remove if possible
+}
+
+func loadErrorHandlingConfig() {
+	AppConfig.ErrorHandling.MaxConsecutiveErrors = getEnvAsInt("MAX_CONSECUTIVE_ERRORS", 25)
+	AppConfig.ErrorHandling.CookieExpirationWarningHours = getEnvAsInt("COOKIE_EXPIRATION_WARNING_HOURS", 24)
+	AppConfig.ErrorHandling.AccountErrorThreshold = getEnvAsInt("ACCOUNT_ERROR_THRESHOLD", 50)
+	AppConfig.ErrorHandling.ErrorNotificationCooldownHours = getEnvAsInt("ERROR_NOTIFICATION_COOLDOWN_HOURS", 6)
+}
+
+func loadStartupConfig() {
+	AppConfig.Startup.TimeoutSeconds = getEnvAsInt("STARTUP_TIMEOUT_SECONDS", 30)
+	shutdownTimeout := getEnvAsInt("SHUTDOWN_TIMEOUT_SECONDS", 15)
+	AppConfig.Startup.ShutdownTimeout = time.Duration(shutdownTimeout) * time.Second
+	healthCheckInterval := getEnvAsInt("HEALTH_CHECK_INTERVAL_SECONDS", 60)
+	AppConfig.Startup.HealthCheckInterval = time.Duration(healthCheckInterval) * time.Second
+}
+
+func loadMessageConfig() {
+	AppConfig.Message.MaxLength = getEnvAsInt("MAX_MESSAGE_LENGTH", 2000)
+	AppConfig.Message.MaxEmbedFields = getEnvAsInt("MAX_EMBED_FIELDS", 25)
+	AppConfig.Message.MaxComponentRows = getEnvAsInt("MAX_COMPONENT_ROWS", 5)
+	AppConfig.Message.EmbedDescLimit = getEnvAsInt("EMBED_DESCRIPTION_LIMIT", 4096)
+}
+
+func loadFallbackConfig() {
+	AppConfig.Fallback.TimeoutSeconds = getEnvAsInt("FALLBACK_TIMEOUT_SECONDS", 30)
+	AppConfig.Fallback.RetryAttempts = getEnvAsInt("FALLBACK_RETRY_ATTEMPTS", 3)
+	AppConfig.Fallback.BackoffMultiplier = getEnvAsFloat("FALLBACK_BACKOFF_MULTIPLIER", 2.0)
 }

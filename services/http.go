@@ -751,15 +751,6 @@ func notifyUserAboutFallbackUsage(userID, primaryProvider, usedProvider string) 
 	}
 
 	if err := SendNotificationWithComponentsV2(nil, account, embed, "", "fallback_usage_notice", components); err != nil {
-		/*
-			traditionalComponents := []discordgo.MessageComponent{
-				discordgo.ActionsRow{
-					Components: components,
-				},
-			}
-			if err := SendNotificationWithComponents(nil, account, embed, "", "fallback_usage_notice", traditionalComponents); err != nil {
-				logger.Log.WithError(err).Error("Failed to send fallback usage notification")
-			}
-		*/
+		logger.Log.WithError(err).Error("Failed to send fallback usage notification")
 	}
 }

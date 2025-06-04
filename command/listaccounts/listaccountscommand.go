@@ -2,16 +2,18 @@ package listaccounts
 
 import (
 	"fmt"
-	"os"
 	"time"
 
+	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
 	"github.com/bradselph/CODStatusBot/services"
+	"github.com/bradselph/CODStatusBot/utils"
 	"github.com/bwmarrin/discordgo"
 )
 
+/*
 var (
 	//	checkCircle    = os.Getenv("CHECKCIRCLE")
 	banCircle = os.Getenv("BANCIRCLE")
@@ -19,6 +21,7 @@ var (
 	stopWatch      = os.Getenv("STOPWATCH")
 	questionCircle = os.Getenv("QUESTIONCIRCLE")
 )
+*/
 
 func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	err := services.DeferWithPreference(s, i, false)
@@ -27,14 +30,16 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	var userID string
-	if i.Member != nil {
-		userID = i.Member.User.ID
-	} else if i.User != nil {
-		userID = i.User.ID
-	} else {
-		logger.Log.Error("Interaction doesn't have Member or User")
+	userID, err := services.GetUserID(i)
+	if err != nil {
+		logger.Log.WithError(err).Error("Could not determine user ID")
 		sendFollowup(s, i, "An error occurred while processing your request.")
+		return
+	}
+
+	if err := utils.ValidateDiscordUserID(userID); err != nil {
+		logger.Log.WithError(err).WithField("userID", userID).Error("Invalid user ID")
+		sendFollowup(s, i, "Invalid user ID provided.")
 		return
 	}
 
@@ -64,6 +69,8 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Fields:      make([]*discordgo.MessageEmbedField, 0),
 	}
 
+	cfg := configuration.Get()
+
 	for _, account := range accounts {
 		checkStatus := services.GetCheckStatus(account.IsCheckDisabled)
 		cookieExpiration := services.FormatExpirationTime(account.SSOCookieExpiration)
@@ -83,13 +90,13 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		fieldValue := fmt.Sprintf("Status: %s\n", account.LastStatus)
 
 		if account.IsPermabanned {
-			fieldValue += banCircle + "Account Permanently Banned\n"
+			fieldValue += cfg.Emojis.BanCircle + "Account Permanently Banned\n"
 		}
 		if account.IsTempbanned {
-			fieldValue += stopWatch + "Account Temporarily Banned\n"
+			fieldValue += cfg.Emojis.StopWatch + "Account Temporarily Banned\n"
 		}
 		if account.IsShadowbanned {
-			fieldValue += questionCircle + "Account Under Review\n"
+			fieldValue += cfg.Emojis.QuestionCircle + "Account Under Review\n"
 		}
 		if account.IsExpiredCookie {
 			fieldValue += "⚠ Cookie Expired\n"
@@ -118,6 +125,8 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			embed.Color = color
 		}
 	}
+
+	embed = services.ValidateEmbedLimits(embed)
 
 	_, err = services.FollowupWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, nil, false)
 	if err != nil {
