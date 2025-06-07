@@ -767,15 +767,17 @@ func SolveCaptchaWithFallback(userID, siteKey, pageURL string) (string, string, 
 		return "", "", fmt.Errorf("failed to get user settings: %w", err)
 	}
 
+	isUsingDefaultKey := settings.CapSolverAPIKey == "" && settings.EZCaptchaAPIKey == "" && settings.TwoCaptchaAPIKey == ""
+
 	primaryProvider := settings.PreferredCaptchaProvider
 	primaryResult, primaryProvider, err := tryPrimaryProvider(userID, primaryProvider, siteKey, pageURL)
 	if err == nil {
 		return primaryResult, primaryProvider, nil
 	}
 
-	logger.Log.WithError(err).Warnf("Primary captcha provider %s failed, attempting fallback", primaryProvider)
+	logger.Log.WithError(err).Warnf("Primary captcha provider %s failed for user %s, attempting fallback", primaryProvider, userID)
 
-	if !settings.EnableFallback {
+	if !settings.EnableFallback || (!settings.UseFallbackForDefault && isUsingDefaultKey) {
 		return "", primaryProvider, fmt.Errorf("fallback disabled, primary provider failed: %w", err)
 	}
 
@@ -786,10 +788,16 @@ func SolveCaptchaWithFallback(userID, siteKey, pageURL string) (string, string, 
 
 	fallbackResult, _, fallbackErr := tryFallbackProvider(userID, fallbackProvider, siteKey, pageURL)
 	if fallbackErr != nil {
+		logger.Log.WithError(fallbackErr).Errorf("Fallback captcha provider %s also failed for user %s", fallbackProvider, userID)
 		return "", primaryProvider, fmt.Errorf("both primary (%s) and fallback (%s) failed: primary=%w, fallback=%w", primaryProvider, fallbackProvider, err, fallbackErr)
 	}
 
-	logger.Log.Infof("Fallback captcha provider %s succeeded for user %s", fallbackProvider, userID)
+	logger.Log.Infof("Fallback captcha provider %s succeeded for user %s (using default key: %v)", fallbackProvider, userID, isUsingDefaultKey)
+
+	if isUsingDefaultKey {
+		go notifyDefaultKeyUserAboutFallback(userID, primaryProvider, fallbackProvider)
+	}
+
 	return fallbackResult, fallbackProvider, nil
 }
 
@@ -858,5 +866,57 @@ func getUserFallbackAPIKey(settings models.UserSettings, fallbackProvider string
 		return settings.TwoCaptchaAPIKey
 	default:
 		return ""
+	}
+}
+
+func notifyDefaultKeyUserAboutFallback(userID, primaryProvider, fallbackProvider string) {
+	settings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to get user settings for fallback notification")
+		return
+	}
+
+	if settings.HasSeenFallbackNotice {
+		return
+	}
+
+	providerLabels := map[string]string{
+		"capsolver": "Capsolver",
+		"ezcaptcha": "EZCaptcha",
+		"2captcha":  "2Captcha",
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "Fallback Service Used Successfully",
+		Description: fmt.Sprintf("Your primary captcha service (%s) failed, but the fallback service (%s) completed your check successfully.", providerLabels[primaryProvider], providerLabels[fallbackProvider]),
+		Color:       0x00D4AA,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "Recommendation",
+				Value:  "Consider setting up your own API key to support the bot and get premium features like unlimited checks and faster intervals.",
+				Inline: false,
+			},
+			{
+				Name:   "Benefits of Your Own Key",
+				Value:  "• No rate limits\n• Faster check intervals\n• More account slots\n• Priority support",
+				Inline: false,
+			},
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "Use /setcaptchaservice to configure your own API key",
+		},
+	}
+
+	var accounts []models.Account
+	if err := database.DB.Where("user_id = ?", userID).First(&accounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to get user account for fallback notification")
+		return
+	}
+
+	if len(accounts) > 0 {
+		if err := SendNotification(nil, accounts[0], embed, "", "fallback_success_notice"); err != nil {
+			logger.Log.WithError(err).Error("Failed to send fallback success notification")
+		}
 	}
 }

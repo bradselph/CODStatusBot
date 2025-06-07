@@ -396,6 +396,10 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 	LogAccountCheck(accountID, userID, "", err == nil,
 		captchaProvider, captchaCost, time.Since(startTime).Milliseconds())
 
+	if accountID > 0 {
+		LogAccountStatusCheck(accountID, userID, overallStatus, "manual_check", "")
+	}
+
 	if usedFallback {
 		go notifyUserAboutFallbackUsage(userID, userSettings.PreferredCaptchaProvider, usedProvider)
 	}

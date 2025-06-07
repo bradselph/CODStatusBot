@@ -105,6 +105,25 @@ func LogStatusChange(accountID uint, userID string, status models.Status,
 	updateBotStatistics("status_change", true, 0)
 }
 
+func LogAccountStatusCheck(accountID uint, userID string, status models.Status, initiator string, errorDetails string) {
+	now := time.Now()
+	statusLog := models.Ban{
+		AccountID:    accountID,
+		Status:       status,
+		LogType:      "check_status",
+		Message:      fmt.Sprintf("Account status checked: %s", status),
+		Timestamp:    now,
+		Initiator:    initiator,
+		ErrorDetails: errorDetails,
+	}
+
+	if err := database.DB.Create(&statusLog).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to create account status check log")
+	} else {
+		logger.Log.Infof("Created status check log for account %d: %s", accountID, status)
+	}
+}
+
 func LogNotification(userID string, accountID uint, notificationType string, success bool) {
 	shardMgr := GetAppShardManager()
 	shardID := 0

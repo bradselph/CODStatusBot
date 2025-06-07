@@ -57,10 +57,6 @@ func RespondWithPreferenceAndComponents(s *discordgo.Session, i *discordgo.Inter
 	flags := GetInteractionFlags(i, forceEphemeral)
 	cfg := configuration.Get()
 
-	if cfg.ComponentsV2.Enabled && len(components) > 0 {
-		flags |= discordgo.MessageFlags(cfg.ComponentsV2.Flag)
-	}
-
 	responseData := &discordgo.InteractionResponseData{
 		Flags: flags,
 	}
@@ -76,6 +72,7 @@ func RespondWithPreferenceAndComponents(s *discordgo.Session, i *discordgo.Inter
 	if len(components) > 0 {
 		if cfg.ComponentsV2.Enabled {
 			responseData.Components = components
+			responseData.Flags |= discordgo.MessageFlagsIsComponentsV2
 		} else {
 			var wrappedComponents []discordgo.MessageComponent
 			for i := 0; i < len(components); i += 5 {
@@ -113,10 +110,6 @@ func FollowupWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate
 	flags := GetInteractionFlags(i, forceEphemeral)
 	cfg := configuration.Get()
 
-	if cfg.ComponentsV2.Enabled && len(components) > 0 {
-		flags |= discordgo.MessageFlags(cfg.ComponentsV2.Flag)
-	}
-
 	params := &discordgo.WebhookParams{
 		Flags: flags,
 	}
@@ -132,6 +125,7 @@ func FollowupWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate
 	if len(components) > 0 {
 		if cfg.ComponentsV2.Enabled {
 			params.Components = components
+			params.Flags |= discordgo.MessageFlagsIsComponentsV2
 		} else {
 			var wrappedComponents []discordgo.MessageComponent
 			for i := 0; i < len(components); i += 5 {
@@ -155,10 +149,6 @@ func UpdateMessageWithPreference(s *discordgo.Session, i *discordgo.InteractionC
 	cfg := configuration.Get()
 	responseData := &discordgo.InteractionResponseData{}
 
-	if cfg.ComponentsV2.Enabled && len(components) > 0 {
-		responseData.Flags = discordgo.MessageFlags(cfg.ComponentsV2.Flag)
-	}
-
 	if content != "" {
 		responseData.Content = content
 	}
@@ -168,8 +158,9 @@ func UpdateMessageWithPreference(s *discordgo.Session, i *discordgo.InteractionC
 	}
 
 	if components != nil {
-		if cfg.ComponentsV2.Enabled {
+		if cfg.ComponentsV2.Enabled && len(components) > 0 {
 			responseData.Components = components
+			responseData.Flags = discordgo.MessageFlagsIsComponentsV2
 		} else {
 			var wrappedComponents []discordgo.MessageComponent
 			for i := 0; i < len(components); i += 5 {

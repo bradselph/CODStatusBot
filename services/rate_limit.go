@@ -192,3 +192,25 @@ func CleanupOldRateLimitData() {
 
 	logger.Log.Infof("Cleaned rate limit data for %d users", cleanedCount)
 }
+
+func validateRateLimit(userID string, action string, limit time.Duration) bool {
+	userSettings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to get user settings for rate limit check")
+		return false
+	}
+
+	userSettings.EnsureMapsInitialized()
+
+	lastAction, exists := userSettings.LastActionTimes[action]
+	if !exists || time.Since(lastAction) >= limit {
+		userSettings.LastActionTimes[action] = time.Now()
+		if err := database.DB.Save(&userSettings).Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to update rate limit timestamp")
+			return false
+		}
+		return true
+	}
+
+	return false
+}

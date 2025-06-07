@@ -86,6 +86,58 @@ func CheckAccounts(s *discordgo.Session) {
 	}
 }
 
+func processUserAccounts(s *discordgo.Session, userID string, userAccounts []models.Account) {
+	userSettings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Errorf("Failed to get user settings for auto check: %s", userID)
+		return
+	}
+
+	if !IsServiceEnabled(userSettings.PreferredCaptchaProvider) {
+		logger.Log.Debugf("Skipping auto check for user %s: preferred captcha service %s is disabled", userID, userSettings.PreferredCaptchaProvider)
+		return
+	}
+
+	for _, account := range userAccounts {
+		if account.IsCheckDisabled || account.IsExpiredCookie {
+			logger.Log.Debugf("Skipping account %s: checks disabled or cookie expired", account.Title)
+			continue
+		}
+
+		if !VerifySSOCookie(account.SSOCookie) {
+			account.IsExpiredCookie = true
+			database.DB.Save(&account)
+			logger.Log.Infof("Marked account %s as having expired cookie", account.Title)
+			continue
+		}
+
+		result, err := CheckAccount(account.SSOCookie, userID, "")
+		if err != nil {
+			logger.Log.WithError(err).Errorf("Error checking account %s during auto check", account.Title)
+
+			account.ConsecutiveErrors++
+			account.LastErrorTime = time.Now()
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to update account error count")
+			}
+
+			cfg := configuration.Get()
+			if account.ConsecutiveErrors >= cfg.ErrorHandling.MaxConsecutiveErrors {
+				disableAccount(s, account, fmt.Sprintf("Too many consecutive errors (%d)", account.ConsecutiveErrors))
+			}
+			continue
+		}
+
+		var updatedAccount models.Account
+		if err := database.DB.First(&updatedAccount, account.ID).Error; err == nil {
+			account = updatedAccount
+		}
+
+		HandleStatusChange(s, account, result, &userSettings)
+		LogAccountStatusCheck(account.ID, userID, result, "auto_check", "")
+	}
+}
+
 func updateShardStats(instanceID string, processedUsers int, durationSec float64) error {
 	stats := map[string]interface{}{
 		"last_check_time": time.Now(),
@@ -169,6 +221,8 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 
 		if err := database.DB.Create(&statusLog).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to create status log")
+		} else {
+			logger.Log.Infof("Created status change log for account %s: %s -> %s", account.Title, previousStatus, newStatus)
 		}
 
 		ban := models.Ban{

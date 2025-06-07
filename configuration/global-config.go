@@ -197,7 +197,6 @@ type Config struct {
 	// Components v2 Settings
 	ComponentsV2 struct {
 		Enabled bool
-		Flag    int //TODO: Remove if possible
 	}
 
 	// Error Handling Settings
@@ -666,7 +665,6 @@ func loadShardingConfig() {
 
 func loadComponentsV2Config() {
 	AppConfig.ComponentsV2.Enabled = getEnvAsBool("COMPONENTS_V2_ENABLED", true)
-	AppConfig.ComponentsV2.Flag = getEnvAsInt("COMPONENTS_V2_FLAG", 32768) //TODO: Remove if possible
 }
 
 func loadErrorHandlingConfig() {

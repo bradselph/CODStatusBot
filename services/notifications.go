@@ -627,7 +627,7 @@ func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Accou
 			Embed:      embed,
 			Content:    content,
 			Components: components,
-			Flags:      discordgo.MessageFlags(cfg.ComponentsV2.Flag),
+			Flags:      discordgo.MessageFlagsIsComponentsV2,
 		}
 
 		_, err = s.ChannelMessageSendComplex(channelID, message)
