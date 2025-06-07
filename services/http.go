@@ -179,20 +179,6 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 	}
 
 	gRecaptchaResponse, usedProvider, err := SolveCaptchaWithFallback(userID, cfg.CaptchaService.RecaptchaSiteKey, cfg.CaptchaService.RecaptchaURL)
-	/*
-		solver, err := GetCaptchaSolver(userID)
-		if err != nil {
-			if strings.Contains(err.Error(), "insufficient balance") {
-				if err := DisableUserCaptcha(nil, userID, "Insufficient balance"); err != nil {
-					logger.Log.WithError(err).Error("Failed to disable user captcha service")
-				}
-				return models.StatusUnknown, fmt.Errorf("critical error: %w", err)
-			}
-			return models.StatusUnknown, fmt.Errorf("failed to create captcha solver: %w", err)
-		}
-
-		gRecaptchaResponse, err := solver.SolveReCaptchaV2(cfg.CaptchaService.RecaptchaSiteKey, cfg.CaptchaService.RecaptchaURL)
-	*/
 	if err != nil {
 		if strings.Contains(err.Error(), "insufficient balance") {
 			if err := DisableUserCaptcha(nil, userID, "Insufficient balance"); err != nil {
@@ -213,7 +199,6 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 
 	logger.Log.Info("Successfully received reCAPTCHA response")
 
-	//checkRequest := fmt.Sprintf("%s?locale=en&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
 	checkRequest := fmt.Sprintf("%s?locale=en_US&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
 	logger.Log.WithField("url", checkRequest).Info("Constructed account check request")
 

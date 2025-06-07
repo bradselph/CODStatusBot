@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/bradselph/CODStatusBot/configuration"
+	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bwmarrin/discordgo"
 )
 
 type CaptchaSolver interface {
@@ -910,13 +912,17 @@ func notifyDefaultKeyUserAboutFallback(userID, primaryProvider, fallbackProvider
 
 	var accounts []models.Account
 	if err := database.DB.Where("user_id = ?", userID).First(&accounts).Error; err != nil {
-		logger.Log.WithError(err).Error("Failed to get user account for fallback notification")
+		logger.Log.WithError(err).Error("Failed to get user accounts for fallback notification")
 		return
 	}
 
 	if len(accounts) > 0 {
 		if err := SendNotification(nil, accounts[0], embed, "", "fallback_success_notice"); err != nil {
 			logger.Log.WithError(err).Error("Failed to send fallback success notification")
+		}
+		settings.HasSeenFallbackNotice = true
+		if err := database.DB.Save(&settings).Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to mark fallback notice as seen")
 		}
 	}
 }

@@ -48,7 +48,6 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 		return models.UserSettings{}, fmt.Errorf("error getting user settings: %w", result.Error)
 	}
 
-	// Check if user has custom API key
 	hasCustomKey := settings.CapSolverAPIKey != "" ||
 		settings.EZCaptchaAPIKey != "" ||
 		settings.TwoCaptchaAPIKey != ""
@@ -205,7 +204,6 @@ func GetUserCaptchaKey(userID string) (string, float64, error) {
 		}
 	}
 
-	// If no custom key is set or no specific provider is selected, use default Capsolver
 	if cfg.CaptchaService.Capsolver.Enabled {
 		defaultKey := cfg.CaptchaService.Capsolver.ClientKey
 		isValid, balance, err := ValidateCaptchaKey(defaultKey, "capsolver")
@@ -218,7 +216,6 @@ func GetUserCaptchaKey(userID string) (string, float64, error) {
 		return defaultKey, balance, nil
 	}
 
-	// If Capsolver is disabled, try other enabled services in order of preference
 	if cfg.CaptchaService.EZCaptcha.Enabled {
 		settings.PreferredCaptchaProvider = "ezcaptcha"
 		if err := database.DB.Save(&settings).Error; err != nil {
@@ -267,12 +264,10 @@ func RemoveCaptchaKey(userID string) error {
 		return result.Error
 	}
 
-	// Check if user had custom keys before removal
 	hadCustomKey := settings.CapSolverAPIKey != "" ||
 		settings.EZCaptchaAPIKey != "" ||
 		settings.TwoCaptchaAPIKey != ""
 
-	// Get configuration and count accounts only once
 	cfg := configuration.Get()
 	var accountCount int64
 	if err := database.DB.Model(&models.Account{}).Where("user_id = ?", userID).Count(&accountCount).Error; err != nil {
@@ -283,7 +278,6 @@ func RemoveCaptchaKey(userID string) error {
 	settings.EZCaptchaAPIKey = ""
 	settings.TwoCaptchaAPIKey = ""
 
-	// Reset to default settings
 	settings.PreferredCaptchaProvider = defaultSettings.PreferredCaptchaProvider
 	settings.FallbackCaptchaProvider = defaultSettings.FallbackCaptchaProvider
 	settings.EnableFallback = defaultSettings.EnableFallback
@@ -299,7 +293,6 @@ func RemoveCaptchaKey(userID string) error {
 
 	defaultMax := cfg.RateLimits.DefaultMaxAccounts
 
-	// If user exceeds default limits, send warning
 	if int64(defaultMax) < accountCount {
 		var accounts []models.Account
 		if err := database.DB.Where("user_id = ?", userID).Find(&accounts).Error; err != nil {
@@ -307,7 +300,6 @@ func RemoveCaptchaKey(userID string) error {
 			return err
 		}
 
-		// Update all accounts to default notification type
 		for _, account := range accounts {
 			account.NotificationType = defaultSettings.NotificationType
 			if err := database.DB.Save(&account).Error; err != nil {
@@ -315,7 +307,6 @@ func RemoveCaptchaKey(userID string) error {
 			}
 		}
 
-		// Create warning embed
 		embed := &discordgo.MessageEmbed{
 			Title: "Account Limit Warning",
 			Description: fmt.Sprintf("You currently have %d accounts monitored, which exceeds the default limit of %d accounts.\n"+
@@ -342,7 +333,6 @@ func RemoveCaptchaKey(userID string) error {
 			Timestamp: time.Now().Format(time.RFC3339),
 		}
 
-		// Send warning notification
 		if len(accounts) > 0 {
 			if err := SendNotification(nil, accounts[0], embed, "", "api_key_removal_warning"); err != nil {
 				logger.Log.WithError(err).Error("Failed to send API key removal warning")
@@ -350,7 +340,6 @@ func RemoveCaptchaKey(userID string) error {
 		}
 	}
 
-	// Save updated settings
 	if err := database.DB.Save(&settings).Error; err != nil {
 		logger.Log.WithError(err).Error("Error saving user settings")
 		return err

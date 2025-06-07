@@ -334,6 +334,7 @@ func loadCaptchaConfig() {
 
 	// 2Captcha
 	AppConfig.CaptchaService.TwoCaptcha.Enabled = os.Getenv("TWOCAPTCHA_ENABLED") == "true"
+	AppConfig.CaptchaService.TwoCaptcha.ClientKey = os.Getenv("TWOCAPTCHA_CLIENT_KEY")
 	AppConfig.CaptchaService.TwoCaptcha.SoftID = os.Getenv("SOFT_ID")
 	AppConfig.CaptchaService.TwoCaptcha.BalanceMin = getEnvAsFloat("TWOCAPBALMIN", 0.10)
 

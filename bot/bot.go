@@ -73,23 +73,27 @@ func StartBot() (*discordgo.Session, error) {
 			logger.Log.WithError(err).Error("Invalid interaction context")
 			return
 		}
-		if i.GuildID != "" {
-			appShardManager := services.GetAppShardManager()
-			if !appShardManager.GuildBelongsToInstance(i.GuildID) {
-				assignedShard := appShardManager.GetGuildShardID(i.GuildID)
-				logger.Log.Debugf("Skipping interaction in guild %s (assigned to shard %d, this is shard %d)",
-					i.GuildID, assignedShard, appShardManager.ShardID)
-				return
-			}
+
+		appShardManager := services.GetAppShardManager()
+		if !appShardManager.Initialized {
+			logger.Log.Debug("App shard manager not initialized, processing interaction")
 		} else {
-			userID := getUserIDFromInteraction(i)
-			if userID != "" {
-				appShardManager := services.GetAppShardManager()
-				if !appShardManager.ShardBelongsToInstance(userID) {
-					assignedShard := appShardManager.GetUserShardID(userID)
-					logger.Log.Debugf("Skipping direct message interaction from user %s (assigned to shard %d, this is shard %d)",
-						userID, assignedShard, appShardManager.ShardID)
+			if i.GuildID != "" {
+				if !appShardManager.GuildBelongsToInstance(i.GuildID) {
+					assignedShard := appShardManager.GetGuildShardID(i.GuildID)
+					logger.Log.Debugf("Skipping interaction in guild %s (assigned to shard %d, this is shard %d)",
+						i.GuildID, assignedShard, appShardManager.ShardID)
 					return
+				}
+			} else {
+				userID := getUserIDFromInteraction(i)
+				if userID != "" {
+					if !appShardManager.ShardBelongsToInstance(userID) {
+						assignedShard := appShardManager.GetUserShardID(userID)
+						logger.Log.Debugf("Skipping direct message interaction from user %s (assigned to shard %d, this is shard %d)",
+							userID, assignedShard, appShardManager.ShardID)
+						return
+					}
 				}
 			}
 		}
@@ -112,27 +116,28 @@ func StartBot() (*discordgo.Session, error) {
 			return
 		}
 
-		if m.GuildID != "" {
-			appShardManager := services.GetAppShardManager()
-			if !appShardManager.GuildBelongsToInstance(m.GuildID) {
-				assignedShard := appShardManager.GetGuildShardID(m.GuildID)
-				logger.Log.Debugf("Skipping message in guild %s (assigned to shard %d, this is shard %d)",
-					m.GuildID, assignedShard, appShardManager.ShardID)
-				return
-			}
-		} else {
-			appShardManager := services.GetAppShardManager()
-			if !appShardManager.ShardBelongsToInstance(m.Author.ID) {
-				assignedShard := appShardManager.GetUserShardID(m.Author.ID)
-				logger.Log.Debugf("Skipping direct message from user %s (assigned to shard %d, this is shard %d)",
-					m.Author.ID, assignedShard, appShardManager.ShardID)
-				return
+		appShardManager := services.GetAppShardManager()
+		if appShardManager.Initialized {
+			if m.GuildID != "" {
+				if !appShardManager.GuildBelongsToInstance(m.GuildID) {
+					assignedShard := appShardManager.GetGuildShardID(m.GuildID)
+					logger.Log.Debugf("Skipping message in guild %s (assigned to shard %d, this is shard %d)",
+						m.GuildID, assignedShard, appShardManager.ShardID)
+					return
+				}
+			} else {
+				if !appShardManager.ShardBelongsToInstance(m.Author.ID) {
+					assignedShard := appShardManager.GetUserShardID(m.Author.ID)
+					logger.Log.Debugf("Skipping direct message from user %s (assigned to shard %d, this is shard %d)",
+						m.Author.ID, assignedShard, appShardManager.ShardID)
+					return
+				}
 			}
 		}
 
 		channel, err := s.Channel(m.ChannelID)
 		if err == nil && channel.Type == discordgo.ChannelTypeDM {
-			logger.Log.Infof("Received DM from user %s (assigned to this shard): %s", m.Author.Username, m.Content)
+			logger.Log.Infof("Received DM from user %s: %s", m.Author.Username, m.Content)
 		}
 	})
 
