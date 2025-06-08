@@ -38,27 +38,16 @@ func CommandRemoveAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		return
 	}
 
-	var (
-		components []discordgo.MessageComponent
-		currentRow []discordgo.MessageComponent
-	)
+	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
-		currentRow = append(currentRow, discordgo.Button{
+		components = append(components, discordgo.Button{
 			Label:    account.Title,
 			Style:    discordgo.PrimaryButton,
 			CustomID: fmt.Sprintf("remove_account_%d", account.ID),
 		})
-
-		if len(currentRow) == 5 {
-			components = append(components, discordgo.ActionsRow{Components: currentRow})
-			currentRow = []discordgo.MessageComponent{}
-		}
 	}
 
-	if len(currentRow) > 0 {
-		components = append(components, discordgo.ActionsRow{Components: currentRow})
-	}
 	err := services.RespondWithPreferenceAndComponents(s, i, "Select an account to remove:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with account selection")
@@ -83,19 +72,15 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 
 	confirmComponents := []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					Label:    "Delete",
-					Style:    discordgo.DangerButton,
-					CustomID: fmt.Sprintf("confirm_remove_%d", account.ID),
-				},
-				discordgo.Button{
-					Label:    "Cancel",
-					Style:    discordgo.SecondaryButton,
-					CustomID: "cancel_remove",
-				},
-			},
+		discordgo.Button{
+			Label:    "Delete",
+			Style:    discordgo.DangerButton,
+			CustomID: fmt.Sprintf("confirm_remove_%d", account.ID),
+		},
+		discordgo.Button{
+			Label:    "Cancel",
+			Style:    discordgo.SecondaryButton,
+			CustomID: "cancel_remove",
 		},
 	}
 

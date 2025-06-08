@@ -57,6 +57,8 @@ func CheckAccounts(s *discordgo.Session) {
 
 	processedCount := 0
 	skippedCount := 0
+	successfulChecks := 0
+	failedChecks := 0
 	start := time.Now()
 
 	for userID, userAccounts := range accountsByUser {
@@ -69,8 +71,8 @@ func CheckAccounts(s *discordgo.Session) {
 	}
 
 	duration := time.Since(start).Seconds()
-	logger.Log.Infof("Completed periodic account check: processed %d users, skipped %d users in %.2f seconds",
-		processedCount, skippedCount, duration)
+	logger.Log.Infof("Completed periodic account check: processed %d users, skipped %d users, successful checks: %d, failed checks: %d, in %.2f seconds",
+		processedCount, skippedCount, successfulChecks, failedChecks, duration)
 
 	if err := updateShardStats(shardMgr.InstanceID, processedCount, duration); err != nil {
 		logger.Log.WithError(err).Error("Failed to update shard stats")

@@ -772,20 +772,45 @@ func SolveCaptchaWithFallback(userID, siteKey, pageURL string) (string, string, 
 	isUsingDefaultKey := settings.CapSolverAPIKey == "" && settings.EZCaptchaAPIKey == "" && settings.TwoCaptchaAPIKey == ""
 
 	primaryProvider := settings.PreferredCaptchaProvider
-	primaryResult, primaryProvider, err := tryPrimaryProvider(userID, primaryProvider, siteKey, pageURL)
+	if !IsServiceEnabled(primaryProvider) {
+		logger.Log.Warnf("Primary provider %s is disabled, switching to alternative", primaryProvider)
+		if IsServiceEnabled("capsolver") {
+			primaryProvider = "capsolver"
+		} else if IsServiceEnabled("ezcaptcha") {
+			primaryProvider = "ezcaptcha"
+		} else if IsServiceEnabled("2captcha") {
+			primaryProvider = "2captcha"
+		} else {
+			return "", primaryProvider, fmt.Errorf("no captcha services are enabled")
+		}
+	}
+
+	primaryResult, usedProvider, err := tryPrimaryProvider(userID, primaryProvider, siteKey, pageURL)
 	if err == nil {
-		return primaryResult, primaryProvider, nil
+		return primaryResult, usedProvider, nil
 	}
 
 	logger.Log.WithError(err).Warnf("Primary captcha provider %s failed for user %s, attempting fallback", primaryProvider, userID)
 
-	if !settings.EnableFallback || (!settings.UseFallbackForDefault && isUsingDefaultKey) {
+	if !settings.EnableFallback {
+		logger.Log.Debugf("Fallback disabled for user %s", userID)
 		return "", primaryProvider, fmt.Errorf("fallback disabled, primary provider failed: %w", err)
 	}
 
+	if !settings.UseFallbackForDefault && isUsingDefaultKey {
+		logger.Log.Debugf("Fallback disabled for default key users, user %s", userID)
+		return "", primaryProvider, fmt.Errorf("fallback disabled for default key users, primary provider failed: %w", err)
+	}
+
 	fallbackProvider := getFallbackProviderForUser(settings)
-	if fallbackProvider == "" {
-		return "", primaryProvider, fmt.Errorf("no fallback provider available: %w", err)
+	if fallbackProvider == "" || fallbackProvider == primaryProvider {
+		logger.Log.Warnf("No valid fallback provider available for user %s (fallback: %s, primary: %s)", userID, fallbackProvider, primaryProvider)
+		return "", primaryProvider, fmt.Errorf("no valid fallback provider available: %w", err)
+	}
+
+	if !IsServiceEnabled(fallbackProvider) {
+		logger.Log.Warnf("Fallback provider %s is disabled for user %s", fallbackProvider, userID)
+		return "", primaryProvider, fmt.Errorf("fallback provider %s is disabled: %w", fallbackProvider, err)
 	}
 
 	fallbackResult, _, fallbackErr := tryFallbackProvider(userID, fallbackProvider, siteKey, pageURL)

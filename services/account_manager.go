@@ -20,6 +20,15 @@ func validateRateLimit(userID, action string, duration time.Duration) bool {
 	}
 
 	userSettings.EnsureMapsInitialized()
+
+	hasCustomKey := userSettings.CapSolverAPIKey != "" ||
+		userSettings.EZCaptchaAPIKey != "" ||
+		userSettings.TwoCaptchaAPIKey != ""
+
+	if hasCustomKey {
+		return true
+	}
+
 	now := time.Now()
 	lastAction := userSettings.LastCommandTimes[action]
 
@@ -50,6 +59,14 @@ func checkActionRateLimit(userID, action string, duration time.Duration) bool {
 	}
 
 	userSettings.EnsureMapsInitialized()
+
+	hasCustomKey := userSettings.CapSolverAPIKey != "" ||
+		userSettings.EZCaptchaAPIKey != "" ||
+		userSettings.TwoCaptchaAPIKey != ""
+
+	if hasCustomKey {
+		return true
+	}
 
 	now := time.Now()
 	lastAction := userSettings.LastActionTimes[action]
@@ -87,6 +104,93 @@ func getActionLimit(action string) int {
 	}
 }
 
+func processUserAccountsWithStats(s *discordgo.Session, userID string, accounts []models.Account) (int, int) {
+	if len(accounts) == 0 {
+		return 0, 0
+	}
+
+	cfg := configuration.Get()
+	userSettings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Errorf("Failed to get user settings for user %s", userID)
+		return 0, 0
+	}
+
+	if err := validateUserCaptchaService(userID, userSettings); err != nil {
+		logger.Log.WithError(err).Errorf("Captcha service validation failed for user %s", userID)
+		notifyUserOfServiceIssue(s, userID, err)
+		if strings.Contains(err.Error(), "insufficient balance") {
+			return 0, 0
+		}
+	}
+
+	notificationInterval := time.Duration(userSettings.NotificationInterval) * time.Hour
+	if notificationInterval == 0 {
+		notificationInterval = time.Duration(cfg.Intervals.Notification) * time.Hour
+	}
+
+	shouldSendDaily := time.Since(userSettings.LastDailyUpdateNotification) >= notificationInterval
+
+	var accountsToUpdate, accountsToNotify, accountsForDailyUpdate []models.Account
+	successfulChecks := 0
+	failedChecks := 0
+
+	for _, account := range accounts {
+		if !account.IsCheckDisabled && !account.IsExpiredCookie {
+			accountsForDailyUpdate = append(accountsForDailyUpdate, account)
+		}
+
+		if !shouldCheckAccount(account, userSettings) {
+			continue
+		}
+
+		if !checkActionRateLimit(userID, fmt.Sprintf("check_account_%d", account.ID), time.Hour) {
+			logger.Log.Infof("Rate limit reached for account %s", account.Title)
+			continue
+		}
+
+		result, err := CheckAccount(account.SSOCookie, userID, "")
+		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
+			handleCheckError(s, &account, err)
+			failedChecks++
+			continue
+		}
+
+		successfulChecks++
+		now := time.Now()
+		account.LastCheck = now.Unix()
+		account.LastSuccessfulCheck = now
+		account.ConsecutiveErrors = 0
+
+		if hasStatusChanged(account, result) {
+			account.LastStatus = result
+			account.LastStatusChange = now.Unix()
+			accountsToNotify = append(accountsToNotify, account)
+		}
+
+		accountsToUpdate = append(accountsToUpdate, account)
+	}
+
+	if len(accountsToUpdate) > 0 {
+		DBMutex.Lock()
+		if err := database.DB.Save(&accountsToUpdate).Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to batch update accounts")
+		}
+		DBMutex.Unlock()
+	}
+
+	if len(accountsToNotify) > 0 {
+		processNotifications(s, accountsToNotify, userSettings)
+	}
+
+	if shouldSendDaily && len(accountsForDailyUpdate) > 0 {
+		SendConsolidatedDailyUpdate(s, userID, userSettings, accountsForDailyUpdate)
+	}
+
+	return successfulChecks, failedChecks
+}
+
 func processUserAccounts(s *discordgo.Session, userID string, accounts []models.Account) {
 	if len(accounts) == 0 {
 		return
@@ -98,7 +202,7 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 		logger.Log.WithError(err).Errorf("Failed to get user settings for user %s", userID)
 		return
 	}
-	//TODO: Ensure when failed that it only reports on invalid results to the solver and balance for the user
+
 	if err := validateUserCaptchaService(userID, userSettings); err != nil {
 		logger.Log.WithError(err).Errorf("Captcha service validation failed for user %s", userID)
 		notifyUserOfServiceIssue(s, userID, err)
@@ -132,6 +236,7 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 
 		result, err := CheckAccount(account.SSOCookie, userID, "")
 		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
 			handleCheckError(s, &account, err)
 			continue
 		}

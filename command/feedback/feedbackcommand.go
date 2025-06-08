@@ -52,19 +52,15 @@ func CommandFeedback(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	logger.Log.WithField("userID", userID).Info("Stored feedback message")
 
 	feedbackComponents := []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					Label:    "Send Anonymously",
-					Style:    discordgo.PrimaryButton,
-					CustomID: fmt.Sprintf("feedback_anonymous_%s", userID),
-				},
-				discordgo.Button{
-					Label:    "Send with ID",
-					Style:    discordgo.SecondaryButton,
-					CustomID: fmt.Sprintf("feedback_with_id_%s", userID),
-				},
-			},
+		discordgo.Button{
+			Label:    "Send Anonymously",
+			Style:    discordgo.PrimaryButton,
+			CustomID: fmt.Sprintf("feedback_anonymous_%s", userID),
+		},
+		discordgo.Button{
+			Label:    "Send with ID",
+			Style:    discordgo.SecondaryButton,
+			CustomID: fmt.Sprintf("feedback_with_id_%s", userID),
 		},
 	}
 

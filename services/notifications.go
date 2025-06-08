@@ -15,20 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func formatVIPStatus(isVIP bool) string {
-	if isVIP {
-		return "Yes"
-	}
-	return "No"
-}
-
-func formatCheckStatus(isDisabled bool) string {
-	if isDisabled {
-		return "DISABLED"
-	}
-	return "ENABLED"
-}
-
 func getNotificationType(status models.Status) string {
 	switch status {
 	case models.StatusPermaban:
@@ -168,19 +154,6 @@ func GetNotificationChannel(s *discordgo.Session, account models.Account, userSe
 	}
 
 	return account.ChannelID, nil
-}
-
-func FormatDuration(d time.Duration) string {
-	days := int(d.Hours() / 24)
-	hours := int(d.Hours()) % 24
-	minutes := int(d.Minutes()) % 60
-
-	if days > 0 {
-		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
-	} else if hours > 0 {
-		return fmt.Sprintf("%dh %dm", hours, minutes)
-	}
-	return fmt.Sprintf("%dm", minutes)
 }
 
 func CheckAndNotifyBalance(s *discordgo.Session, userID string, balance float64) {

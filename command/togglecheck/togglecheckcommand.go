@@ -34,27 +34,15 @@ func CommandToggleCheck(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	var (
-		components []discordgo.MessageComponent
-		currentRow []discordgo.MessageComponent
-	)
+	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
 		label := fmt.Sprintf("%s (%s)", account.Title, services.GetCheckStatus(account.IsCheckDisabled))
-		currentRow = append(currentRow, discordgo.Button{
+		components = append(components, discordgo.Button{
 			Label:    label,
 			Style:    discordgo.PrimaryButton,
 			CustomID: fmt.Sprintf("toggle_check_%d", account.ID),
 		})
-
-		if len(currentRow) == 5 {
-			components = append(components, discordgo.ActionsRow{Components: currentRow})
-			currentRow = []discordgo.MessageComponent{}
-		}
-	}
-
-	if len(currentRow) > 0 {
-		components = append(components, discordgo.ActionsRow{Components: currentRow})
 	}
 
 	err = services.RespondWithPreferenceAndComponents(s, i, "Select an account to toggle auto check On/Off:", nil, components, false)

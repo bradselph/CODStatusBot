@@ -13,6 +13,10 @@ import (
 
 var defaultSettings models.UserSettings
 
+func init() {
+	initDefaultSettings()
+}
+
 func initDefaultSettings() {
 	cfg := configuration.Get()
 	defaultSettings = models.UserSettings{

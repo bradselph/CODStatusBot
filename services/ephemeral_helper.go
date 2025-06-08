@@ -3,6 +3,7 @@ package services
 import (
 	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/database"
+	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
 	"github.com/bwmarrin/discordgo"
 )
@@ -73,20 +74,29 @@ func RespondWithPreferenceAndComponents(s *discordgo.Session, i *discordgo.Inter
 		if cfg.ComponentsV2.Enabled {
 			responseData.Components = components
 			responseData.Flags |= discordgo.MessageFlagsIsComponentsV2
-		} else {
-			var wrappedComponents []discordgo.MessageComponent
-			for i := 0; i < len(components); i += 5 {
-				end := i + 5
-				if end > len(components) {
-					end = len(components)
-				}
-				row := discordgo.ActionsRow{
-					Components: components[i:end],
-				}
-				wrappedComponents = append(wrappedComponents, row)
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: responseData,
+			})
+			if err == nil {
+				return nil
 			}
-			responseData.Components = wrappedComponents
+			logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
 		}
+
+		var wrappedComponents []discordgo.MessageComponent
+		for i := 0; i < len(components); i += 5 {
+			end := i + 5
+			if end > len(components) {
+				end = len(components)
+			}
+			row := discordgo.ActionsRow{
+				Components: components[i:end],
+			}
+			wrappedComponents = append(wrappedComponents, row)
+		}
+		responseData.Components = wrappedComponents
+		responseData.Flags &= ^discordgo.MessageFlagsIsComponentsV2
 	}
 
 	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -126,20 +136,26 @@ func FollowupWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate
 		if cfg.ComponentsV2.Enabled {
 			params.Components = components
 			params.Flags |= discordgo.MessageFlagsIsComponentsV2
-		} else {
-			var wrappedComponents []discordgo.MessageComponent
-			for i := 0; i < len(components); i += 5 {
-				end := i + 5
-				if end > len(components) {
-					end = len(components)
-				}
-				row := discordgo.ActionsRow{
-					Components: components[i:end],
-				}
-				wrappedComponents = append(wrappedComponents, row)
+			msg, err := s.FollowupMessageCreate(i.Interaction, true, params)
+			if err == nil {
+				return msg, nil
 			}
-			params.Components = wrappedComponents
+			logger.Log.WithError(err).Warn("Components v2 followup failed, falling back to legacy components")
 		}
+
+		var wrappedComponents []discordgo.MessageComponent
+		for i := 0; i < len(components); i += 5 {
+			end := i + 5
+			if end > len(components) {
+				end = len(components)
+			}
+			row := discordgo.ActionsRow{
+				Components: components[i:end],
+			}
+			wrappedComponents = append(wrappedComponents, row)
+		}
+		params.Components = wrappedComponents
+		params.Flags &= ^discordgo.MessageFlagsIsComponentsV2
 	}
 
 	return s.FollowupMessageCreate(i.Interaction, true, params)
@@ -161,20 +177,29 @@ func UpdateMessageWithPreference(s *discordgo.Session, i *discordgo.InteractionC
 		if cfg.ComponentsV2.Enabled && len(components) > 0 {
 			responseData.Components = components
 			responseData.Flags = discordgo.MessageFlagsIsComponentsV2
-		} else {
-			var wrappedComponents []discordgo.MessageComponent
-			for i := 0; i < len(components); i += 5 {
-				end := i + 5
-				if end > len(components) {
-					end = len(components)
-				}
-				row := discordgo.ActionsRow{
-					Components: components[i:end],
-				}
-				wrappedComponents = append(wrappedComponents, row)
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: responseData,
+			})
+			if err == nil {
+				return nil
 			}
-			responseData.Components = wrappedComponents
+			logger.Log.WithError(err).Warn("Components v2 update failed, falling back to legacy components")
 		}
+
+		var wrappedComponents []discordgo.MessageComponent
+		for i := 0; i < len(components); i += 5 {
+			end := i + 5
+			if end > len(components) {
+				end = len(components)
+			}
+			row := discordgo.ActionsRow{
+				Components: components[i:end],
+			}
+			wrappedComponents = append(wrappedComponents, row)
+		}
+		responseData.Components = wrappedComponents
+		responseData.Flags &= ^discordgo.MessageFlagsIsComponentsV2
 	}
 
 	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{

@@ -53,11 +53,7 @@ func CommandSetCaptchaService(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	captchaComponents := []discordgo.MessageComponent{
-		discordgo.ActionsRow{Components: components},
-	}
-
-	err := services.RespondWithPreferenceAndComponents(s, i, "Select a captcha service provider:", nil, captchaComponents, false)
+	err := services.RespondWithPreferenceAndComponents(s, i, "Select a captcha service provider:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with service selection")
 	}
@@ -375,19 +371,9 @@ func showFallbackSettings(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		},
 	}
 
-	response := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: components,
-			Flags:      32768,
-		},
-	}
-
-	err = s.InteractionRespond(i.Interaction, response)
+	err = services.UpdateMessageWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, components)
 	if err != nil {
-		logger.Log.WithError(err).Error("Error responding with fallback settings (Components v2)")
-		fallbackToTraditional(s, i, embed, components)
+		logger.Log.WithError(err).Error("Error updating message with fallback settings")
 	}
 }
 
@@ -492,31 +478,4 @@ func dismissFallbackNotice(s *discordgo.Session, i *discordgo.InteractionCreate,
 	}
 
 	respondToInteraction(s, i, "You will no longer receive fallback service notifications. You can still configure fallback settings using /setcaptchaservice.")
-}
-
-func fallbackToTraditional(s *discordgo.Session, i *discordgo.InteractionCreate, embed *discordgo.MessageEmbed, components []discordgo.MessageComponent) {
-	logger.Log.Info("Falling back to traditional ActionRow method")
-
-	var actionRows []discordgo.MessageComponent
-	for idx := 0; idx < len(components); idx += 5 {
-		end := idx + 5
-		if end > len(components) {
-			end = len(components)
-		}
-		actionRows = append(actionRows, discordgo.ActionsRow{
-			Components: components[idx:end],
-		})
-	}
-
-	response := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: actionRows,
-		},
-	}
-
-	if err := s.InteractionRespond(i.Interaction, response); err != nil {
-		logger.Log.WithError(err).Error("Failed traditional fallback method too")
-	}
 }
