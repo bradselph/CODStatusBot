@@ -36,9 +36,9 @@ func CommandSetCaptchaService(s *discordgo.Session, i *discordgo.InteractionCrea
 		components = append(components, createProviderButton("2captcha"))
 	}
 
-	components = append(components, services.CreateV2Button("Remove API Key", "set_captcha_remove", discordgo.DangerButton))
+	components = append(components, services.CreateLegacyButton("Remove API Key", "set_captcha_remove", discordgo.DangerButton))
 
-	components = append(components, services.CreateV2Button("Fallback Settings", "set_captcha_fallback", discordgo.SecondaryButton))
+	components = append(components, services.CreateLegacyButton("Fallback Settings", "set_captcha_fallback", discordgo.SecondaryButton))
 
 	if len(components) == 1 {
 		respondToInteraction(s, i, "No captcha services are currently enabled. Please contact the bot administrator.")
@@ -91,7 +91,7 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func createProviderButton(provider string) discordgo.MessageComponent {
-	return services.CreateV2Button(providerLabels[provider], fmt.Sprintf("set_captcha_%s", provider), discordgo.PrimaryButton)
+	return services.CreateLegacyButton(providerLabels[provider], fmt.Sprintf("set_captcha_%s", provider), discordgo.PrimaryButton)
 }
 
 func handleAPIKeyRemoval(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -295,22 +295,22 @@ func showFallbackSettings(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		enabledStyle = discordgo.SecondaryButton
 	}
 
-	components = append(components, services.CreateV2Button(enabledLabel, "toggle_fallback_enabled", enabledStyle))
+	components = append(components, services.CreateLegacyButton(enabledLabel, "toggle_fallback_enabled", enabledStyle))
 
 	cfg := configuration.Get()
 	if cfg.CaptchaService.Capsolver.Enabled && settings.PreferredCaptchaProvider != "capsolver" {
-		components = append(components, services.CreateV2Button("Set Capsolver as Fallback", "set_fallback_capsolver", discordgo.SecondaryButton))
+		components = append(components, services.CreateLegacyButton("Set Capsolver as Fallback", "set_fallback_capsolver", discordgo.SecondaryButton))
 	}
 
 	if cfg.CaptchaService.EZCaptcha.Enabled && settings.PreferredCaptchaProvider != "ezcaptcha" {
-		components = append(components, services.CreateV2Button("Set EZCaptcha as Fallback", "set_fallback_ezcaptcha", discordgo.SecondaryButton))
+		components = append(components, services.CreateLegacyButton("Set EZCaptcha as Fallback", "set_fallback_ezcaptcha", discordgo.SecondaryButton))
 	}
 
 	if cfg.CaptchaService.TwoCaptcha.Enabled && settings.PreferredCaptchaProvider != "2captcha" {
-		components = append(components, services.CreateV2Button("Set 2Captcha as Fallback", "set_fallback_2captcha", discordgo.SecondaryButton))
+		components = append(components, services.CreateLegacyButton("Set 2Captcha as Fallback", "set_fallback_2captcha", discordgo.SecondaryButton))
 	}
 
-	components = append(components, services.CreateV2Button("Back to Main Menu", "captcha_main_menu", discordgo.SecondaryButton))
+	components = append(components, services.CreateLegacyButton("Back to Main Menu", "captcha_main_menu", discordgo.SecondaryButton))
 
 	embed := &discordgo.MessageEmbed{
 		Title:       "🔄 Fallback Captcha Settings",

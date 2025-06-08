@@ -17,6 +17,10 @@ func init() {
 	initDefaultSettings()
 }
 
+func InitDefaultSettings() {
+	initDefaultSettings()
+}
+
 func initDefaultSettings() {
 	cfg := configuration.Get()
 	defaultSettings = models.UserSettings{

@@ -66,7 +66,9 @@ func CheckAccounts(s *discordgo.Session) {
 			skippedCount++
 			continue
 		}
-		processUserAccounts(s, userID, userAccounts)
+		userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
+		successfulChecks += userSuccess
+		failedChecks += userFailed
 		processedCount++
 	}
 

@@ -59,24 +59,36 @@ func RespondWithPreferenceAndComponents(s *discordgo.Session, i *discordgo.Inter
 	cfg := configuration.Get()
 
 	if cfg.ComponentsV2.Enabled && len(components) > 0 {
-		v2Response := &discordgo.InteractionResponseData{
-			Flags: flags | discordgo.MessageFlagsIsComponentsV2,
+		v2Components, legacyComponents := separateComponentsByVersion(components)
+
+		if len(v2Components) > 0 {
+			v2Response := &discordgo.InteractionResponseData{
+				Flags: flags | discordgo.MessageFlagsIsComponentsV2,
+			}
+
+			if content != "" {
+				v2Response.Content = content
+			}
+
+			if len(embeds) > 0 {
+				v2Response.Embeds = embeds
+			}
+
+			v2Response.Components = v2Components
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: v2Response,
+			})
+
+			if err == nil {
+				return nil
+			}
+
+			logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
 		}
 
-		if len(components) > 0 {
-			v2Response.Components = components
-		}
-
-		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: v2Response,
-		})
-
-		if err == nil {
-			return nil
-		}
-
-		logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
+		components = legacyComponents
 	}
 
 	responseData := &discordgo.InteractionResponseData{
@@ -128,20 +140,32 @@ func FollowupWithPreference(s *discordgo.Session, i *discordgo.InteractionCreate
 	cfg := configuration.Get()
 
 	if cfg.ComponentsV2.Enabled && len(components) > 0 {
-		v2Params := &discordgo.WebhookParams{
-			Flags: flags | discordgo.MessageFlagsIsComponentsV2,
+		v2Components, legacyComponents := separateComponentsByVersion(components)
+
+		if len(v2Components) > 0 {
+			v2Params := &discordgo.WebhookParams{
+				Flags: flags | discordgo.MessageFlagsIsComponentsV2,
+			}
+
+			if content != "" {
+				v2Params.Content = content
+			}
+
+			if len(embeds) > 0 {
+				v2Params.Embeds = embeds
+			}
+
+			v2Params.Components = v2Components
+
+			msg, err := s.FollowupMessageCreate(i.Interaction, true, v2Params)
+			if err == nil {
+				return msg, nil
+			}
+
+			logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
 		}
 
-		if len(components) > 0 {
-			v2Params.Components = components
-		}
-
-		msg, err := s.FollowupMessageCreate(i.Interaction, true, v2Params)
-		if err == nil {
-			return msg, nil
-		}
-
-		logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
+		components = legacyComponents
 	}
 
 	params := &discordgo.WebhookParams{
@@ -178,24 +202,36 @@ func UpdateMessageWithPreference(s *discordgo.Session, i *discordgo.InteractionC
 	cfg := configuration.Get()
 
 	if cfg.ComponentsV2.Enabled && len(components) > 0 {
-		v2Response := &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsIsComponentsV2,
+		v2Components, legacyComponents := separateComponentsByVersion(components)
+
+		if len(v2Components) > 0 {
+			v2Response := &discordgo.InteractionResponseData{
+				Flags: discordgo.MessageFlagsIsComponentsV2,
+			}
+
+			if content != "" {
+				v2Response.Content = content
+			}
+
+			if len(embeds) > 0 {
+				v2Response.Embeds = embeds
+			}
+
+			v2Response.Components = v2Components
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: v2Response,
+			})
+
+			if err == nil {
+				return nil
+			}
+
+			logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
 		}
 
-		if len(components) > 0 {
-			v2Response.Components = components
-		}
-
-		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: v2Response,
-		})
-
-		if err == nil {
-			return nil
-		}
-
-		logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
+		components = legacyComponents
 	}
 
 	responseData := &discordgo.InteractionResponseData{}
@@ -293,4 +329,42 @@ func CreateComponentsBasedOnConfig(components []discordgo.MessageComponent) []di
 func ShouldUseComponentsV2() bool {
 	cfg := configuration.Get()
 	return cfg.ComponentsV2.Enabled
+}
+
+func separateComponentsByVersion(components []discordgo.MessageComponent) ([]discordgo.MessageComponent, []discordgo.MessageComponent) {
+	var v2Components []discordgo.MessageComponent
+	var legacyComponents []discordgo.MessageComponent
+
+	for _, component := range components {
+		compType := component.Type()
+		if isV2ComponentType(compType) {
+			v2Components = append(v2Components, component)
+		} else {
+			legacyComponents = append(legacyComponents, component)
+		}
+	}
+
+	return v2Components, legacyComponents
+}
+
+func isV2ComponentType(componentType discordgo.ComponentType) bool {
+	allowedV2Types := map[discordgo.ComponentType]bool{
+		discordgo.ActionsRowComponent: true,
+	}
+	switch componentType {
+	case 9:
+		return true
+	case 10:
+		return true
+	case 12:
+		return true
+	case 13:
+		return true
+	case 14:
+		return true
+	case 17:
+		return true
+	}
+
+	return allowedV2Types[componentType]
 }

@@ -159,14 +159,38 @@ func getBalanceInfo(userID string) string {
 		return ""
 	}
 
-	apiKey, balance, err := services.GetUserCaptchaKey(userID)
-	if err != nil {
-		logger.Log.WithError(err).Error("Error getting user captcha key")
-		return ""
+	hasCustomKey := userSettings.CapSolverAPIKey != "" ||
+		userSettings.EZCaptchaAPIKey != "" ||
+		userSettings.TwoCaptchaAPIKey != ""
+
+	if !hasCustomKey {
+		return "\n\nYou are using the bot's default API key. Consider setting up your own key using /setcaptchaservice for unlimited checks."
 	}
 
-	if apiKey == "" {
-		return "\n\nYou are using the bot's default API key. Consider setting up your own key using /setcaptchaservice for unlimited checks."
+	var balance float64
+	var providerName string
+
+	switch userSettings.PreferredCaptchaProvider {
+	case "capsolver":
+		if userSettings.CapSolverAPIKey != "" {
+			_, balance, err = services.ValidateCaptchaKey(userSettings.CapSolverAPIKey, "capsolver")
+			providerName = "Capsolver"
+		}
+	case "ezcaptcha":
+		if userSettings.EZCaptchaAPIKey != "" {
+			_, balance, err = services.ValidateCaptchaKey(userSettings.EZCaptchaAPIKey, "ezcaptcha")
+			providerName = "EZCaptcha"
+		}
+	case "2captcha":
+		if userSettings.TwoCaptchaAPIKey != "" {
+			_, balance, err = services.ValidateCaptchaKey(userSettings.TwoCaptchaAPIKey, "2captcha")
+			providerName = "2Captcha"
+		}
+	}
+
+	if err != nil {
+		logger.Log.WithError(err).Error("Error validating user captcha key")
+		return "\n\nError retrieving balance information."
 	}
 
 	var threshold float64
@@ -180,7 +204,7 @@ func getBalanceInfo(userID string) string {
 	}
 
 	balanceMsg := fmt.Sprintf("\n\nYour current %s balance: %.2f points",
-		userSettings.PreferredCaptchaProvider, balance)
+		providerName, balance)
 
 	if balance < threshold {
 		balanceMsg += fmt.Sprintf(" (Warning: Below recommended %.2f points)", threshold)

@@ -153,6 +153,28 @@ type Analytics struct { // The analytics table
 	ShardID         int       `gorm:"index"` // The shard ID that processed this event
 	InstanceID      string    `gorm:"index"` // The instance ID that processed this event
 }
+
+type BotStatistics struct { // Daily bot statistics
+	gorm.Model
+	Date             time.Time `gorm:"uniqueIndex;not null"` // Date for the statistics
+	CommandsUsed     int       `gorm:"default:0"`            // Number of commands executed
+	AccountsChecked  int       `gorm:"default:0"`            // Number of accounts checked
+	StatusChanges    int       `gorm:"default:0"`            // Number of status changes detected
+	CaptchaUsed      int       `gorm:"default:0"`            // Number of captcha challenges solved
+	CaptchaErrors    int       `gorm:"default:0"`            // Number of captcha errors
+	ActiveUsers      int       `gorm:"default:0"`            // Number of unique active users
+	AverageCheckTime float64   `gorm:"default:0"`            // Average check time in milliseconds
+}
+
+type CommandStatistics struct { // Command usage statistics
+	gorm.Model
+	CommandName   string    `gorm:"index;not null"` // Name of the command
+	Date          time.Time `gorm:"index;not null"` // Date for the statistics
+	UsageCount    int       `gorm:"default:0"`      // Number of times command was used
+	SuccessCount  int       `gorm:"default:0"`      // Number of successful executions
+	ErrorCount    int       `gorm:"default:0"`      // Number of failed executions
+	AverageTimeMs float64   `gorm:"default:0"`      // Average execution time in milliseconds
+}
 type Status string // The status of the account.
 
 const (

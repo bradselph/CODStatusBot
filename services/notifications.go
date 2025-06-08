@@ -747,16 +747,47 @@ func SendGlobalAnnouncement(s *discordgo.Session, userID string) error {
 }
 
 func SendAnnouncementToAllUsers(s *discordgo.Session) error {
+	cfg := configuration.Get()
 	var users []models.UserSettings
-	if err := database.DB.Find(&users).Error; err != nil {
-		logger.Log.WithError(err).Error("Error fetching all users")
-		return err
+	if err := database.DB.Where("has_seen_announcement = ?", false).Find(&users).Error; err != nil {
+		return fmt.Errorf("failed to get users for announcement: %w", err)
 	}
 
+	if len(users) == 0 {
+		return nil
+	}
+
+	embed := CreateAnnouncementEmbed()
+	sentCount := 0
+
 	for _, user := range users {
-		if err := SendGlobalAnnouncement(s, user.UserID); err != nil {
-			logger.Log.WithError(err).Errorf("Failed to send announcement to user %s", user.UserID)
+		if time.Since(user.LastDailyUpdateNotification) < time.Duration(cfg.Intervals.GlobalNotification)*time.Hour {
+			continue
 		}
+
+		channel, err := s.UserChannelCreate(user.UserID)
+		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to create DM channel for user %s", user.UserID)
+			continue
+		}
+
+		if _, err := s.ChannelMessageSendEmbed(channel.ID, embed); err != nil {
+			logger.Log.WithError(err).Errorf("Failed to send announcement to user %s", user.UserID)
+			continue
+		}
+
+		user.HasSeenAnnouncement = true
+		user.LastDailyUpdateNotification = time.Now()
+		if err := database.DB.Save(&user).Error; err != nil {
+			logger.Log.WithError(err).Errorf("Failed to update announcement status for user %s", user.UserID)
+		}
+
+		sentCount++
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if sentCount > 0 {
+		logger.Log.Infof("Sent global announcement to %d users", sentCount)
 	}
 
 	return nil

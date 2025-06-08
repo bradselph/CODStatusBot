@@ -38,42 +38,21 @@ func CommandAccountLogs(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	var (
-		components []discordgo.MessageComponent
-		currentRow []discordgo.MessageComponent
-	)
+	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
-		currentRow = append(currentRow, discordgo.Button{
+		components = append(components, discordgo.Button{
 			Label:    account.Title,
 			Style:    discordgo.PrimaryButton,
 			CustomID: fmt.Sprintf("account_logs_%d", account.ID),
 		})
-
-		if len(currentRow) == 5 {
-			components = append(components, discordgo.ActionsRow{Components: currentRow})
-			currentRow = []discordgo.MessageComponent{}
-		}
 	}
 
-	if len(currentRow) < 5 {
-		currentRow = append(currentRow, discordgo.Button{
-			Label:    "View All Logs",
-			Style:    discordgo.SuccessButton,
-			CustomID: "account_logs_all",
-		})
-	} else {
-		components = append(components, discordgo.ActionsRow{Components: currentRow})
-		currentRow = []discordgo.MessageComponent{
-			discordgo.Button{
-				Label:    "View All Logs",
-				Style:    discordgo.SuccessButton,
-				CustomID: "account_logs_all",
-			},
-		}
-	}
-
-	components = append(components, discordgo.ActionsRow{Components: currentRow})
+	components = append(components, discordgo.Button{
+		Label:    "View All Logs",
+		Style:    discordgo.SuccessButton,
+		CustomID: "account_logs_all",
+	})
 
 	err := services.RespondWithPreferenceAndComponents(s, i, "Select an account to view its logs, or 'View All Logs' to see logs for all accounts:", nil, components, false)
 	if err != nil {

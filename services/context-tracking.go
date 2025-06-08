@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/bradselph/CODStatusBot/configuration"
@@ -9,6 +10,43 @@ import (
 	"github.com/bradselph/CODStatusBot/models"
 	"github.com/bwmarrin/discordgo"
 )
+
+func GetUserID(i *discordgo.InteractionCreate) (string, error) {
+	if i.Member != nil {
+		return i.Member.User.ID, nil
+	}
+	if i.User != nil {
+		return i.User.ID, nil
+	}
+	return "", fmt.Errorf("no user found in interaction")
+}
+
+func FormatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.0f seconds", d.Seconds())
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%.0f minutes", d.Minutes())
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%.1f hours", d.Hours())
+	}
+	return fmt.Sprintf("%.1f days", d.Hours()/24)
+}
+
+func formatVIPStatus(isVIP bool) string {
+	if isVIP {
+		return "VIP Member"
+	}
+	return "Standard Member"
+}
+
+func formatCheckStatus(isDisabled bool) string {
+	if isDisabled {
+		return "Disabled"
+	}
+	return "Enabled"
+}
 
 func TrackUserInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	userID, err := GetUserID(i)
@@ -125,31 +163,34 @@ func GetInstallationStats() (serverCount int64, directCount int64, err error) {
 }
 
 func LogInstallationStats(s *discordgo.Session) {
-	guildCount := len(s.State.Guilds)
-
-	serverUsers, directUsers, err := GetInstallationStats()
-	if err != nil {
-		logger.Log.WithError(err).Error("Failed to get installation statistics")
-		return
+	var stats struct {
+		TotalUsers     int64
+		ActiveUsers    int64
+		TotalAccounts  int64
+		ActiveAccounts int64
+		TotalGuilds    int64
+		UserInstalls   int64
+		GuildInstalls  int64
 	}
 
-	var totalUsers int64
-	if err := database.DB.Model(&models.UserSettings{}).Count(&totalUsers).Error; err != nil {
-		logger.Log.WithError(err).Error("Failed to count total users")
-		return
-	}
+	database.DB.Model(&models.UserSettings{}).Count(&stats.TotalUsers)
+	database.DB.Model(&models.UserSettings{}).Where("updated_at > ?", time.Now().Add(-7*24*time.Hour)).Count(&stats.ActiveUsers)
+	database.DB.Model(&models.Account{}).Count(&stats.TotalAccounts)
+	database.DB.Model(&models.Account{}).Where("is_check_disabled = ? AND is_expired_cookie = ?", false, false).Count(&stats.ActiveAccounts)
+	database.DB.Model(&models.UserSettings{}).Where("installation_type = ?", "direct").Count(&stats.UserInstalls)
+	database.DB.Model(&models.UserSettings{}).Where("installation_type = ?", "server").Count(&stats.GuildInstalls)
 
-	var activeUsers int64
-	oneWeekAgo := time.Now().Add(-7 * 24 * time.Hour)
-	if err := database.DB.Model(&models.UserSettings{}).
-		Where("last_guild_interaction > ? OR last_direct_interaction > ?", oneWeekAgo, oneWeekAgo).
-		Count(&activeUsers).Error; err != nil {
-		logger.Log.WithError(err).Error("Failed to count active users")
-		return
+	distinctGuilds := make(map[string]bool)
+	var userSettings []models.UserSettings
+	if err := database.DB.Select("installation_guild_id").Where("installation_guild_id != ''").Find(&userSettings).Error; err == nil {
+		for _, us := range userSettings {
+			if us.InstallationGuildID != "" {
+				distinctGuilds[us.InstallationGuildID] = true
+			}
+		}
 	}
+	stats.TotalGuilds = int64(len(distinctGuilds))
 
-	logger.Log.Infof("Installation Stats: Bot is in %d servers | %d total users (%d active in last 7 days)",
-		guildCount, totalUsers, activeUsers)
-	logger.Log.Infof("Usage Context: %d users installed in servers | %d users use direct installation",
-		serverUsers, directUsers)
+	logger.Log.Infof("Installation Stats - Total Users: %d, Active Users (7d): %d, Total Accounts: %d, Active Accounts: %d, Total Guilds: %d, User Installs: %d, Guild Installs: %d",
+		stats.TotalUsers, stats.ActiveUsers, stats.TotalAccounts, stats.ActiveAccounts, stats.TotalGuilds, stats.UserInstalls, stats.GuildInstalls)
 }
