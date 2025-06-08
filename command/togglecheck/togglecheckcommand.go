@@ -38,11 +38,8 @@ func CommandToggleCheck(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	for _, account := range accounts {
 		label := fmt.Sprintf("%s (%s)", account.Title, services.GetCheckStatus(account.IsCheckDisabled))
-		components = append(components, discordgo.Button{
-			Label:    label,
-			Style:    discordgo.PrimaryButton,
-			CustomID: fmt.Sprintf("toggle_check_%d", account.ID),
-		})
+		button := services.CreateV2Button(label, fmt.Sprintf("toggle_check_%d", account.ID), discordgo.PrimaryButton)
+		components = append(components, button)
 	}
 
 	err = services.RespondWithPreferenceAndComponents(s, i, "Select an account to toggle auto check On/Off:", nil, components, false)
@@ -106,20 +103,8 @@ func showConfirmationButtons(s *discordgo.Session, i *discordgo.InteractionCreat
 	logger.Log.Infof("Showing confirmation buttons for account %d", accountID)
 
 	confirmComponents := []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					Label:    "Confirm Re-enable",
-					Style:    discordgo.SuccessButton,
-					CustomID: fmt.Sprintf("confirm_reenable_%d", accountID),
-				},
-				discordgo.Button{
-					Label:    "Cancel",
-					Style:    discordgo.DangerButton,
-					CustomID: "cancel_reenable",
-				},
-			},
-		},
+		services.CreateV2Button("Confirm Re-enable", fmt.Sprintf("confirm_reenable_%d", accountID), discordgo.SuccessButton),
+		services.CreateV2Button("Cancel", "cancel_reenable", discordgo.DangerButton),
 	}
 
 	_, err := services.FollowupWithPreference(s, i, message, nil, confirmComponents, false)

@@ -41,11 +41,8 @@ func CommandRemoveAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
-		components = append(components, discordgo.Button{
-			Label:    account.Title,
-			Style:    discordgo.PrimaryButton,
-			CustomID: fmt.Sprintf("remove_account_%d", account.ID),
-		})
+		button := services.CreateV2Button(account.Title, fmt.Sprintf("remove_account_%d", account.ID), discordgo.PrimaryButton)
+		components = append(components, button)
 	}
 
 	err := services.RespondWithPreferenceAndComponents(s, i, "Select an account to remove:", nil, components, false)
@@ -72,16 +69,8 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 
 	confirmComponents := []discordgo.MessageComponent{
-		discordgo.Button{
-			Label:    "Delete",
-			Style:    discordgo.DangerButton,
-			CustomID: fmt.Sprintf("confirm_remove_%d", account.ID),
-		},
-		discordgo.Button{
-			Label:    "Cancel",
-			Style:    discordgo.SecondaryButton,
-			CustomID: "cancel_remove",
-		},
+		services.CreateV2Button("Delete", fmt.Sprintf("confirm_remove_%d", account.ID), discordgo.DangerButton),
+		services.CreateV2Button("Cancel", "cancel_remove", discordgo.SecondaryButton),
 	}
 
 	err = services.UpdateMessageWithPreference(s, i, fmt.Sprintf("Are you sure you want to remove the account '%s'? This action is permanent and cannot be undone.", account.Title), nil, confirmComponents)

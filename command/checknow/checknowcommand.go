@@ -107,18 +107,12 @@ func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, ac
 	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
-		components = append(components, discordgo.Button{
-			Label:    account.Title,
-			Style:    discordgo.PrimaryButton,
-			CustomID: fmt.Sprintf("check_now_%s_%d", userID, account.ID),
-		})
+		button := services.CreateV2Button(account.Title, fmt.Sprintf("check_now_%s_%d", userID, account.ID), discordgo.PrimaryButton)
+		components = append(components, button)
 	}
 
-	components = append(components, discordgo.Button{
-		Label:    "Check All",
-		Style:    discordgo.SuccessButton,
-		CustomID: fmt.Sprintf("check_now_%s_all", userID),
-	})
+	checkAllButton := services.CreateV2Button("Check All", fmt.Sprintf("check_now_%s_all", userID), discordgo.SuccessButton)
+	components = append(components, checkAllButton)
 
 	err = services.RespondWithPreferenceAndComponents(s, i, "Select an account to check, or 'Check All' to check all accounts:", nil, components, false)
 	if err != nil {
