@@ -38,26 +38,11 @@ func CommandAccountAge(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	var (
-		components []discordgo.MessageComponent
-		currentRow []discordgo.MessageComponent
-	)
+	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
-		currentRow = append(currentRow, discordgo.Button{
-			Label:    account.Title,
-			Style:    discordgo.PrimaryButton,
-			CustomID: fmt.Sprintf("account_age_%d", account.ID),
-		})
-
-		if len(currentRow) == 5 {
-			components = append(components, discordgo.ActionsRow{Components: currentRow})
-			currentRow = []discordgo.MessageComponent{}
-		}
-	}
-
-	if len(currentRow) > 0 {
-		components = append(components, discordgo.ActionsRow{Components: currentRow})
+		button := services.CreateV2Button(account.Title, fmt.Sprintf("account_age_%d", account.ID), discordgo.PrimaryButton)
+		components = append(components, button)
 	}
 
 	err := services.RespondWithPreferenceAndComponents(s, i, "Select an account to check its age:", nil, components, false)

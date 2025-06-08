@@ -173,7 +173,7 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		userSettings.TwoCaptchaAPIKey == ""
 
 	if isUsingDefaultKey {
-		if !validateRateLimit(userID, "check_account", cfg.RateLimits.CheckNow) {
+		if !checkActionRateLimit(userID, "check_account", time.Hour) {
 			return models.StatusUnknown, fmt.Errorf("rate limit exceeded for default key users")
 		}
 	}

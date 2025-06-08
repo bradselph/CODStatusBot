@@ -594,11 +594,10 @@ func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Accou
 	}
 
 	cfg := configuration.Get()
+	var message *discordgo.MessageSend
 
 	if cfg.ComponentsV2.Enabled && len(components) > 0 {
-		message := &discordgo.MessageSend{
-			Embed:      embed,
-			Content:    content,
+		message = &discordgo.MessageSend{
 			Components: components,
 			Flags:      discordgo.MessageFlagsIsComponentsV2,
 		}
@@ -638,7 +637,7 @@ func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Accou
 		}
 	}
 
-	message := &discordgo.MessageSend{
+	message = &discordgo.MessageSend{
 		Embed:      embed,
 		Content:    content,
 		Components: wrappedComponents,
