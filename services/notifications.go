@@ -147,22 +147,26 @@ func GetCooldownDuration(userSettings models.UserSettings, notificationType stri
 
 func GetNotificationChannel(s *discordgo.Session, account models.Account, userSettings models.UserSettings) (string, error) {
 	if account.UserID == "" {
+		logger.Log.Errorf("Account %s (ID: %d) has empty UserID - cannot create notification channel", account.Title, account.ID)
 		return "", fmt.Errorf("account has empty userID - cannot create notification channel")
 	}
 
 	if userSettings.NotificationType == "dm" {
 		if len(account.UserID) < 17 || len(account.UserID) > 19 {
+			logger.Log.Errorf("Invalid UserID format for account %s (ID: %d): %s (should be 17-19 digit Discord snowflake)", account.Title, account.ID, account.UserID)
 			return "", fmt.Errorf("invalid userID format: %s (should be 17-19 digit Discord snowflake)", account.UserID)
 		}
 
 		channel, err := s.UserChannelCreate(account.UserID)
 		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to create DM channel for user %s (Account: %s, ID: %d)", account.UserID, account.Title, account.ID)
 			return "", fmt.Errorf("failed to create DM channel for user %s: %w", account.UserID, err)
 		}
 		return channel.ID, nil
 	}
 
 	if account.ChannelID == "" {
+		logger.Log.Errorf("Account %s (ID: %d) has no channel ID set", account.Title, account.ID)
 		return "", fmt.Errorf("no channel ID set for account")
 	}
 
@@ -491,6 +495,11 @@ func (nl *NotificationLimiter) CanSendNotification(userID string, notificationTy
 }
 
 func SendNotification(s *discordgo.Session, account models.Account, embed *discordgo.MessageEmbed, content, notificationType string) error {
+	if account.UserID == "" {
+		logger.Log.Errorf("Cannot send notification for account %s (ID: %d) - empty UserID", account.Title, account.ID)
+		return fmt.Errorf("cannot send notification - account has empty UserID")
+	}
+
 	if !globalLimiter.CanSendNotification(account.UserID, notificationType) {
 		storeSuppressedNotification(account.UserID, notificationType, embed, content)
 		logger.Log.WithFields(logrus.Fields{
@@ -567,6 +576,11 @@ func SendNotification(s *discordgo.Session, account models.Account, embed *disco
 }
 
 func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Account, embed *discordgo.MessageEmbed, content, notificationType string, components []discordgo.MessageComponent) error {
+	if account.UserID == "" {
+		logger.Log.Errorf("Cannot send notification for account %s (ID: %d) - empty UserID", account.Title, account.ID)
+		return fmt.Errorf("cannot send notification - account has empty UserID")
+	}
+
 	if !globalLimiter.CanSendNotification(account.UserID, notificationType) {
 		storeSuppressedNotification(account.UserID, notificationType, embed, content)
 		logger.Log.WithFields(logrus.Fields{

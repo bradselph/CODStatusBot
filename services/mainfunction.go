@@ -72,6 +72,10 @@ func CheckAccounts(s *discordgo.Session) {
 
 	accountsByUser := make(map[string][]models.Account)
 	for _, account := range accounts {
+		if account.UserID == "" {
+			logger.Log.Warnf("Skipping account %s (ID: %d) with empty UserID", account.Title, account.ID)
+			continue
+		}
 		accountsByUser[account.UserID] = append(accountsByUser[account.UserID], account)
 	}
 
@@ -711,9 +715,20 @@ func ScheduleTempBanNotification(s *discordgo.Session, account models.Account, d
 }
 
 func getChannelForAnnouncement(s *discordgo.Session, userID string, userSettings models.UserSettings) (string, error) {
+	if userID == "" {
+		logger.Log.Error("Cannot get announcement channel - empty UserID")
+		return "", fmt.Errorf("cannot get announcement channel - empty UserID")
+	}
+
 	if userSettings.NotificationType == "dm" {
+		if len(userID) < 17 || len(userID) > 19 {
+			logger.Log.Errorf("Invalid UserID format for announcement: %s (should be 17-19 digit Discord snowflake)", userID)
+			return "", fmt.Errorf("invalid userID format: %s (should be 17-19 digit Discord snowflake)", userID)
+		}
+
 		channel, err := s.UserChannelCreate(userID)
 		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to create DM channel for user %s during announcement", userID)
 			return "", fmt.Errorf("failed to create DM channel: %w", err)
 		}
 		return channel.ID, nil
