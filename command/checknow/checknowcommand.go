@@ -62,6 +62,16 @@ func CommandCheckNow(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			respondToInteraction(s, i, fmt.Sprintf("You're using the bot's default API key and are rate limited. Please wait %v before trying again, or set up your own API key using /setcaptchaservice for unlimited checks.", rateLimit), true)
 			return
 		}
+
+		if userSettings.FallbackCaptchaProvider != "" && (!userSettings.EnableFallback || !userSettings.UseFallbackForDefault) {
+			userSettings.EnableFallback = true
+			userSettings.UseFallbackForDefault = true
+			if err := database.DB.Save(&userSettings).Error; err != nil {
+				logger.Log.WithError(err).Error("Error enabling fallback for default user")
+			} else {
+				logger.Log.Infof("Enabled fallback captcha solver for default user %s (EnableFallback: %t, UseFallbackForDefault: %t)", userID, userSettings.EnableFallback, userSettings.UseFallbackForDefault)
+			}
+		}
 	}
 
 	if userSettings.CapSolverAPIKey != "" || userSettings.EZCaptchaAPIKey != "" || userSettings.TwoCaptchaAPIKey != "" {
@@ -104,17 +114,106 @@ func showAccountButtons(s *discordgo.Session, i *discordgo.InteractionCreate, ac
 		return
 	}
 
+	isUsingDefaultKey := userSettings.CapSolverAPIKey == "" &&
+		userSettings.EZCaptchaAPIKey == "" &&
+		userSettings.TwoCaptchaAPIKey == ""
+
+	cfg := configuration.Get()
+	userSettings.EnsureMapsInitialized()
+	checksUsed := userSettings.ActionCounts["check_now"]
+	maxChecks := cfg.RateLimits.DefaultMaxAccounts
+
+	if isUsingDefaultKey {
+		lastCheck := userSettings.LastCommandTimes["check_now"]
+		if !lastCheck.IsZero() && time.Since(lastCheck) >= cfg.RateLimits.CheckNow {
+			checksUsed = 0
+		}
+	}
+
+	var enabledAccounts []models.Account
+	var disabledAccounts []models.Account
+	for _, account := range accounts {
+		if account.IsCheckDisabled {
+			disabledAccounts = append(disabledAccounts, account)
+		} else {
+			enabledAccounts = append(enabledAccounts, account)
+		}
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:     "Account Check - Select Account",
+		Color:     0x0099FF,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	if isUsingDefaultKey {
+		remaining := maxChecks - checksUsed
+		if remaining <= 0 {
+			remaining = 0
+		}
+		embed.Description = fmt.Sprintf("Select an account to check or 'Check All' to check all enabled accounts.\n\n**Available Checks:** %d/%d remaining", remaining, maxChecks)
+
+		if remaining == 0 {
+			lastCheck := userSettings.LastCommandTimes["check_now"]
+			timeUntilNext := cfg.RateLimits.CheckNow - time.Since(lastCheck)
+			embed.Description += fmt.Sprintf("\n⚠️ **Rate Limited** - Next reset in: %s", formatDuration(timeUntilNext))
+			embed.Color = 0xFFA500
+			embed.Fields = []*discordgo.MessageEmbedField{
+				{
+					Name:   "Remove Limits",
+					Value:  "Add your own API key using `/setcaptchaservice` to get unlimited checks",
+					Inline: false,
+				},
+			}
+			respondToInteractionWithEmbed(s, i, "", embed, userSettings.PreferEphemeralResponses)
+			return
+		}
+	} else {
+		embed.Description = "Select an account to check or 'Check All' to check all enabled accounts.\n\n**Premium User:** Unlimited checks available"
+	}
+
+	if len(enabledAccounts) > 0 {
+		var accountList []string
+		for _, account := range enabledAccounts {
+			accountList = append(accountList, fmt.Sprintf("• %s", account.Title))
+		}
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   fmt.Sprintf("✅ Enabled Accounts (%d)", len(enabledAccounts)),
+			Value:  strings.Join(accountList, "\n"),
+			Inline: true,
+		})
+	}
+
+	if len(disabledAccounts) > 0 {
+		var disabledList []string
+		for _, account := range disabledAccounts {
+			disabledList = append(disabledList, fmt.Sprintf("• %s (%s)", account.Title, account.DisabledReason))
+		}
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   fmt.Sprintf("🚫 Disabled Accounts (%d)", len(disabledAccounts)),
+			Value:  strings.Join(disabledList, "\n"),
+			Inline: true,
+		})
+	}
+
 	var components []discordgo.MessageComponent
 
-	for _, account := range accounts {
+	for _, account := range enabledAccounts {
 		button := services.CreateLegacyButton(account.Title, fmt.Sprintf("check_now_%s_%d", userID, account.ID), discordgo.PrimaryButton)
 		components = append(components, button)
 	}
 
-	checkAllButton := services.CreateLegacyButton("Check All", fmt.Sprintf("check_now_%s_all", userID), discordgo.SuccessButton)
-	components = append(components, checkAllButton)
+	for _, account := range disabledAccounts {
+		button := services.CreateLegacyButton(fmt.Sprintf("%s (Disabled)", account.Title), fmt.Sprintf("check_now_%s_%d", userID, account.ID), discordgo.SecondaryButton)
+		components = append(components, button)
+	}
 
-	err = services.RespondWithPreferenceAndComponents(s, i, "Select an account to check, or 'Check All' to check all accounts:", nil, components, false)
+	if len(enabledAccounts) > 0 {
+		checkAllButton := services.CreateLegacyButton("Check All Enabled", fmt.Sprintf("check_now_%s_all", userID), discordgo.SuccessButton)
+		components = append(components, checkAllButton)
+	}
+
+	err = services.RespondWithPreferenceAndComponents(s, i, "", []*discordgo.MessageEmbed{embed}, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with account selection")
 	}
@@ -161,22 +260,37 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 			}
 		}
 
+		if userSettings.FallbackCaptchaProvider != "" && (!userSettings.EnableFallback || !userSettings.UseFallbackForDefault) {
+			userSettings.EnableFallback = true
+			userSettings.UseFallbackForDefault = true
+			if err := database.DB.Save(&userSettings).Error; err != nil {
+				logger.Log.WithError(err).Error("Error enabling fallback for default user in selection")
+			} else {
+				logger.Log.Infof("Enabled fallback captcha solver for default user %s in selection handler", userID)
+			}
+		}
+
 		if accountIDOrAll == "all" {
-			var accountCount int64
-			if err := database.DB.Model(&models.Account{}).Where("user_id = ?", userID).Count(&accountCount).Error; err != nil {
-				logger.Log.WithError(err).Error("Error counting accounts")
+			var enabledAccountCount int64
+			if err := database.DB.Model(&models.Account{}).Where("user_id = ? AND is_check_disabled = ?", userID, false).Count(&enabledAccountCount).Error; err != nil {
+				logger.Log.WithError(err).Error("Error counting enabled accounts")
 				respondToInteraction(s, i, "Error counting accounts. Please try again.", true)
 				return
 			}
 
-			if int(accountCount) > (maxChecks - checksUsed) {
+			if enabledAccountCount == 0 {
+				respondToInteraction(s, i, "No enabled accounts found to check.", true)
+				return
+			}
+
+			if int(enabledAccountCount) > (maxChecks - checksUsed) {
 				timeUntilNext := cfg.RateLimits.CheckNow - time.Since(lastCheck)
 				embed := &discordgo.MessageEmbed{
 					Title: "Insufficient Checks Available",
 					Description: fmt.Sprintf("You need %d checks but only have %d remaining.\n\n"+
 						"Next reset in: %s\n\n"+
 						"To remove this limit, set up your own API key using `/setcaptchaservice`",
-						accountCount, maxChecks-checksUsed, formatDuration(timeUntilNext)),
+						enabledAccountCount, maxChecks-checksUsed, formatDuration(timeUntilNext)),
 					Color: 0xFFA500,
 					Fields: []*discordgo.MessageEmbedField{
 						{
@@ -196,7 +310,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 				return
 			}
 
-			userSettings.ActionCounts["check_now"] += int(accountCount)
+			userSettings.ActionCounts["check_now"] += int(enabledAccountCount)
 		} else {
 			if checksUsed >= maxChecks {
 				timeUntilNext := cfg.RateLimits.CheckNow - time.Since(lastCheck)
@@ -248,10 +362,14 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 
 	var accounts []models.Account
 	if accountIDOrAll == "all" {
-		result := database.DB.Where("user_id = ?", userID).Find(&accounts)
+		result := database.DB.Where("user_id = ? AND is_check_disabled = ?", userID, false).Find(&accounts)
 		if result.Error != nil {
 			logger.Log.WithError(result.Error).Error("Error fetching accounts")
 			respondToInteraction(s, i, "Error fetching accounts. Please try again later.", true)
+			return
+		}
+		if len(accounts) == 0 {
+			respondToInteraction(s, i, "No enabled accounts found to check.", true)
 			return
 		}
 	} else {
@@ -267,6 +385,29 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 		if result.Error != nil {
 			logger.Log.WithError(result.Error).Error("Error fetching account")
 			respondToInteraction(s, i, "Error: Account not found or you don't have permission to check it.", true)
+			return
+		}
+
+		if account.IsCheckDisabled {
+			embed := &discordgo.MessageEmbed{
+				Title:       fmt.Sprintf("%s - Account Disabled", account.Title),
+				Description: fmt.Sprintf("Checks are disabled for this account.\n\n**Reason:** %s\n\n✅ No check was deducted from your limit.", account.DisabledReason),
+				Color:       0xA9A9A9,
+				Timestamp:   time.Now().Format(time.RFC3339),
+				Fields: []*discordgo.MessageEmbedField{
+					{
+						Name:   "Account Status",
+						Value:  "Disabled",
+						Inline: true,
+					},
+					{
+						Name:   "Enable Checks",
+						Value:  "Use `/togglecheck` to enable",
+						Inline: true,
+					},
+				},
+			}
+			respondToInteractionWithEmbed(s, i, "", embed, userSettings.PreferEphemeralResponses)
 			return
 		}
 
