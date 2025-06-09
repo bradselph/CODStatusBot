@@ -44,6 +44,26 @@ func CheckAccounts(s *discordgo.Session) {
 		}
 	}
 
+	var totalAccounts int64
+	var disabledAccounts int64
+	var expiredCookieAccounts int64
+
+	if err := database.DB.Model(&models.Account{}).Count(&totalAccounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count total accounts")
+		return
+	}
+
+	if err := database.DB.Model(&models.Account{}).Where("is_check_disabled = ?", true).Count(&disabledAccounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count disabled accounts")
+	}
+
+	if err := database.DB.Model(&models.Account{}).Where("is_expired_cookie = ?", true).Count(&expiredCookieAccounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count expired cookie accounts")
+	}
+
+	logger.Log.Infof("Account status summary: Total: %d, Disabled: %d, Expired Cookies: %d, Eligible for check: %d",
+		totalAccounts, disabledAccounts, expiredCookieAccounts, totalAccounts-disabledAccounts-expiredCookieAccounts)
+
 	var accounts []models.Account
 	if err := database.DB.Where("is_check_disabled = ? AND is_expired_cookie = ?", false, false).Find(&accounts).Error; err != nil {
 		logger.Log.WithError(err).Error("Failed to fetch accounts from database")

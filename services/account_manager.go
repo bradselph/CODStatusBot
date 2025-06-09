@@ -26,8 +26,11 @@ func validateRateLimit(userID, action string, duration time.Duration) bool {
 		userSettings.TwoCaptchaAPIKey != ""
 
 	if hasCustomKey {
+		logger.Log.Debugf("User %s has custom API key, bypassing rate limit for action: %s", userID, action)
 		return true
 	}
+
+	logger.Log.Debugf("User %s using default key, checking rate limit for action: %s", userID, action)
 
 	now := time.Now()
 	lastAction := userSettings.LastCommandTimes[action]
@@ -59,8 +62,11 @@ func checkActionRateLimit(userID, action string, duration time.Duration) bool {
 		userSettings.TwoCaptchaAPIKey != ""
 
 	if hasCustomKey {
+		logger.Log.Debugf("Premium user %s bypassing action rate limit for: %s", userID, action)
 		return true
 	}
+
+	logger.Log.Debugf("Regular user %s checking action rate limit for: %s (duration: %v)", userID, action, duration)
 
 	now := time.Now()
 	lastAction := userSettings.LastActionTimes[action]
@@ -139,13 +145,15 @@ func processUserAccountsWithStats(s *discordgo.Session, userID string, accounts 
 		}
 
 		if !checkActionRateLimit(userID, fmt.Sprintf("check_account_%d", account.ID), time.Hour) {
-			logger.Log.Infof("Rate limit reached for account %s", account.Title)
+			logger.Log.Infof("Rate limit reached for account %s (ID: %d, User: %s)", account.Title, account.ID, userID)
 			continue
 		}
 
+		logger.Log.Infof("Starting check for account: %s (ID: %d, User: %s)", account.Title, account.ID, userID)
 		startTime := time.Now()
 		result, err := CheckAccount(account.SSOCookie, userID, "")
 		responseTime := time.Since(startTime).Milliseconds()
+		logger.Log.Infof("Completed check for account: %s (ID: %d, User: %s) - Result: %s, Time: %dms", account.Title, account.ID, userID, result, responseTime)
 
 		if err != nil {
 			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
@@ -229,13 +237,15 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 		}
 
 		if !checkActionRateLimit(userID, fmt.Sprintf("check_account_%d", account.ID), time.Hour) {
-			logger.Log.Infof("Rate limit reached for account %s", account.Title)
+			logger.Log.Infof("Rate limit reached for account %s (ID: %d, User: %s)", account.Title, account.ID, userID)
 			continue
 		}
 
+		logger.Log.Infof("Starting check for account: %s (ID: %d, User: %s)", account.Title, account.ID, userID)
 		startTime := time.Now()
 		result, err := CheckAccount(account.SSOCookie, userID, "")
 		responseTime := time.Since(startTime).Milliseconds()
+		logger.Log.Infof("Completed check for account: %s (ID: %d, User: %s) - Result: %s, Time: %dms", account.Title, account.ID, userID, result, responseTime)
 
 		if err != nil {
 			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
@@ -361,17 +371,17 @@ func shouldCheckAccount(account models.Account, settings models.UserSettings) bo
 	cfg := configuration.Get()
 
 	if account.IsCheckDisabled {
-		logger.Log.Debugf("Account %s is disabled, skipping check", account.Title)
+		logger.Log.Infof("Account %s (ID: %d, User: %s) is disabled, skipping check. Reason: %s", account.Title, account.ID, account.UserID, account.DisabledReason)
 		return false
 	}
 
 	if account.IsExpiredCookie {
-		logger.Log.Debugf("Account %s has expired cookie, skipping check", account.Title)
+		logger.Log.Infof("Account %s (ID: %d, User: %s) has expired cookie, skipping check", account.Title, account.ID, account.UserID)
 		return false
 	}
 
 	if account.LastCheck == 0 {
-		logger.Log.Debugf("Account %s has never been checked, allowing check", account.Title)
+		logger.Log.Infof("Account %s (ID: %d, User: %s) has never been checked, allowing check", account.Title, account.ID, account.UserID)
 		return true
 	}
 
@@ -381,7 +391,7 @@ func shouldCheckAccount(account models.Account, settings models.UserSettings) bo
 	var checkInterval time.Duration
 	if account.IsPermabanned {
 		checkInterval = time.Duration(cfg.Intervals.PermaBanCheck) * time.Hour
-		logger.Log.Debugf("Account %s is permabanned, using permaban check interval: %v", account.Title, checkInterval)
+		logger.Log.Debugf("Account %s (ID: %d, User: %s) is permabanned, using permaban check interval: %v", account.Title, account.ID, account.UserID, checkInterval)
 	} else {
 		userInterval := settings.CheckInterval
 		if userInterval < 1 {
@@ -395,8 +405,10 @@ func shouldCheckAccount(account models.Account, settings models.UserSettings) bo
 		defaultRateLimit := cfg.RateLimits.Default
 		if checkInterval < defaultRateLimit {
 			checkInterval = defaultRateLimit
-			logger.Log.Debugf("Account %s using default rate limit instead: %v", account.Title, checkInterval)
+			logger.Log.Debugf("Account %s (ID: %d, User: %s) using default rate limit instead: %v (regular user)", account.Title, account.ID, account.UserID, checkInterval)
 		}
+	} else {
+		logger.Log.Debugf("Account %s (ID: %d, User: %s) is premium user, using custom interval: %v", account.Title, account.ID, account.UserID, checkInterval)
 	}
 
 	if account.ConsecutiveErrors > cfg.ErrorHandling.MaxConsecutiveErrors && !account.LastErrorTime.IsZero() {
@@ -410,8 +422,8 @@ func shouldCheckAccount(account models.Account, settings models.UserSettings) bo
 	timeSinceLastCheck := time.Since(lastCheckTime)
 	shouldCheck := timeSinceLastCheck >= checkInterval
 
-	logger.Log.Debugf("Account %s check decision: should=%v, timeSince=%v, interval=%v, hasCustomKey=%v",
-		account.Title, shouldCheck, timeSinceLastCheck, checkInterval, hasCustomKey)
+	logger.Log.Infof("Account %s (ID: %d, User: %s) check decision: should=%v, timeSince=%v, interval=%v, premium=%v",
+		account.Title, account.ID, account.UserID, shouldCheck, timeSinceLastCheck, checkInterval, hasCustomKey)
 
 	return shouldCheck
 }

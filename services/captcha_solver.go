@@ -785,8 +785,10 @@ func SolveCaptchaWithFallback(userID, siteKey, pageURL string) (string, string, 
 		}
 	}
 
+	logger.Log.Infof("Attempting primary captcha provider %s for user %s (using default key: %v)", primaryProvider, userID, isUsingDefaultKey)
 	primaryResult, usedProvider, err := tryPrimaryProvider(userID, primaryProvider, siteKey, pageURL)
 	if err == nil {
+		logger.Log.Infof("Primary captcha provider %s succeeded for user %s", primaryProvider, userID)
 		return primaryResult, usedProvider, nil
 	}
 

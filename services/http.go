@@ -116,15 +116,21 @@ func VerifySSOCookie(ssoCookie string) bool {
 func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models.Status, error) {
 	startTime := time.Now()
 	cfg := configuration.Get()
-	logger.Log.Info("Starting CheckAccount function")
+
+	var account models.Account
+	var accountInfo string = "Unknown"
+	if result := database.DB.Where("sso_cookie = ?", ssoCookie).First(&account); result.Error == nil {
+		accountInfo = fmt.Sprintf("%s (ID: %d, User: %s)", account.Title, account.ID, userID)
+	}
+
+	logger.Log.Infof("Starting CheckAccount function for account: %s", accountInfo)
 
 	var accountID uint = 0
 	var captchaProvider string = ""
 	var captchaCost float64 = 0.0
 	var usedFallback bool = false
 
-	var account models.Account
-	if result := database.DB.Where("sso_cookie = ?", ssoCookie).First(&account); result.Error == nil {
+	if account.ID != 0 {
 		accountID = account.ID
 	}
 
@@ -172,8 +178,10 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		}
 	}
 
+	logger.Log.Infof("Solving captcha for account: %s using preferred provider: %s", accountInfo, userSettings.PreferredCaptchaProvider)
 	gRecaptchaResponse, usedProvider, err := SolveCaptchaWithFallback(userID, cfg.CaptchaService.RecaptchaSiteKey, cfg.CaptchaService.RecaptchaURL)
 	if err != nil {
+		logger.Log.WithError(err).Errorf("Failed to solve captcha for account: %s", accountInfo)
 		if strings.Contains(err.Error(), "insufficient balance") {
 			if err := DisableUserCaptcha(nil, userID, "Insufficient balance"); err != nil {
 				logger.Log.WithError(err).Error("Failed to disable user captcha service")
@@ -185,7 +193,7 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 
 	captchaProvider = usedProvider
 	usedFallback = (usedProvider != userSettings.PreferredCaptchaProvider)
-	logger.Log.Infof("Captcha solved using provider: %s (fallback: %v)", usedProvider, usedFallback)
+	logger.Log.Infof("Captcha solved for account: %s using provider: %s (fallback: %v, default key: %v)", accountInfo, usedProvider, usedFallback, isUsingDefaultKey)
 
 	if strings.Contains(gRecaptchaResponse, "Invalid") || len(gRecaptchaResponse) < 50 {
 		return models.StatusUnknown, fmt.Errorf("invalid captcha response received")
@@ -383,7 +391,7 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		go notifyUserAboutFallbackUsage(userID, userSettings.PreferredCaptchaProvider, usedProvider)
 	}
 
-	logger.Log.Infof("Account status determined: %s, Rank Locked: %v", overallStatus, isRankLocked)
+	logger.Log.Infof("CheckAccount completed for account: %s - Status: %s, Rank Locked: %v, Duration: %v", accountInfo, overallStatus, isRankLocked, time.Since(startTime))
 	return overallStatus, nil
 }
 

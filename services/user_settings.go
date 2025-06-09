@@ -30,6 +30,7 @@ func initDefaultSettings() {
 		StatusChangeCooldown:     cfg.Intervals.StatusChange,
 		NotificationType:         "channel",
 		PreferredCaptchaProvider: "capsolver",
+		FallbackCaptchaProvider:  "ezcaptcha",
 		EnableFallback:           true,
 		UseFallbackForDefault:    true,
 		CustomSettings:           false,
@@ -37,17 +38,44 @@ func initDefaultSettings() {
 
 	if cfg.CaptchaService.Capsolver.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "capsolver"
-		defaultSettings.FallbackCaptchaProvider = GetFallbackProvider("capsolver")
+		if cfg.CaptchaService.EZCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "ezcaptcha"
+		} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "2captcha"
+		} else {
+			defaultSettings.FallbackCaptchaProvider = ""
+			defaultSettings.EnableFallback = false
+		}
 	} else if cfg.CaptchaService.EZCaptcha.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "ezcaptcha"
-		defaultSettings.FallbackCaptchaProvider = GetFallbackProvider("ezcaptcha")
+		if cfg.CaptchaService.Capsolver.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "capsolver"
+		} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "2captcha"
+		} else {
+			defaultSettings.FallbackCaptchaProvider = ""
+			defaultSettings.EnableFallback = false
+		}
 	} else if cfg.CaptchaService.TwoCaptcha.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "2captcha"
-		defaultSettings.FallbackCaptchaProvider = GetFallbackProvider("2captcha")
+		if cfg.CaptchaService.Capsolver.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "capsolver"
+		} else if cfg.CaptchaService.EZCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "ezcaptcha"
+		} else {
+			defaultSettings.FallbackCaptchaProvider = ""
+			defaultSettings.EnableFallback = false
+		}
+	} else {
+		logger.Log.Warn("No captcha services are enabled - functionality will be limited")
+		defaultSettings.PreferredCaptchaProvider = "capsolver"
+		defaultSettings.FallbackCaptchaProvider = "ezcaptcha"
+		defaultSettings.EnableFallback = false
 	}
 }
 
 func GetUserSettings(userID string) (models.UserSettings, error) {
+	cfg := configuration.Get()
 	logger.Log.Infof("Getting user settings for user: %s", userID)
 
 	var settings models.UserSettings
@@ -63,11 +91,38 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 	settings.EnsureMapsInitialized()
 
 	if settings.PreferredCaptchaProvider == "" {
-		settings.PreferredCaptchaProvider = "capsolver"
+		if cfg.CaptchaService.Capsolver.Enabled {
+			settings.PreferredCaptchaProvider = "capsolver"
+		} else if cfg.CaptchaService.EZCaptcha.Enabled {
+			settings.PreferredCaptchaProvider = "ezcaptcha"
+		} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+			settings.PreferredCaptchaProvider = "2captcha"
+		} else {
+			settings.PreferredCaptchaProvider = "capsolver"
+		}
 	}
 
 	if settings.FallbackCaptchaProvider == "" {
-		settings.FallbackCaptchaProvider = GetFallbackProvider(settings.PreferredCaptchaProvider)
+		switch settings.PreferredCaptchaProvider {
+		case "capsolver":
+			if cfg.CaptchaService.EZCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "ezcaptcha"
+			} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "2captcha"
+			}
+		case "ezcaptcha":
+			if cfg.CaptchaService.Capsolver.Enabled {
+				settings.FallbackCaptchaProvider = "capsolver"
+			} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "2captcha"
+			}
+		case "2captcha":
+			if cfg.CaptchaService.Capsolver.Enabled {
+				settings.FallbackCaptchaProvider = "capsolver"
+			} else if cfg.CaptchaService.EZCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "ezcaptcha"
+			}
+		}
 	}
 
 	if settings.LastDailyUpdateNotification.IsZero() {
