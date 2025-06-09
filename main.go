@@ -104,7 +104,6 @@ func run() error {
 	}
 
 	services.InitHTTPClients()
-	services.InitializeServices()
 
 	if !cfg.CaptchaService.Capsolver.Enabled && !cfg.CaptchaService.EZCaptcha.Enabled && !cfg.CaptchaService.TwoCaptcha.Enabled {
 		logger.Log.Warn("No captcha services are enabled - functionality will be limited")
@@ -144,6 +143,9 @@ func run() error {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 	logger.Log.Info("Database connection established successfully")
+
+	services.InitializeProxyStatsAfterDB()
+	logger.Log.Info("Proxy stats initialization completed")
 
 	appShardManager := services.GetAppShardManager()
 	if err := appShardManager.Initialize(); err != nil {

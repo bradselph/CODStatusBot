@@ -100,13 +100,18 @@ func NotifyAdmin(s *discordgo.Session, message string) {
 	cfg := configuration.Get()
 	adminID := cfg.Discord.DeveloperID
 	if adminID == "" {
-		logger.Log.Error("Developer ID not configured")
+		logger.Log.Error("Developer ID not configured - cannot send admin notifications")
+		return
+	}
+
+	if len(adminID) < 17 || len(adminID) > 19 {
+		logger.Log.Errorf("Invalid Developer ID format: %s (should be 17-19 digit Discord snowflake)", adminID)
 		return
 	}
 
 	channel, err := s.UserChannelCreate(adminID)
 	if err != nil {
-		logger.Log.WithError(err).Error("Failed to create DM channel with admin")
+		logger.Log.WithError(err).Errorf("Failed to create DM channel with admin %s", adminID)
 		return
 	}
 
@@ -141,10 +146,18 @@ func GetCooldownDuration(userSettings models.UserSettings, notificationType stri
 }
 
 func GetNotificationChannel(s *discordgo.Session, account models.Account, userSettings models.UserSettings) (string, error) {
+	if account.UserID == "" {
+		return "", fmt.Errorf("account has empty userID - cannot create notification channel")
+	}
+
 	if userSettings.NotificationType == "dm" {
+		if len(account.UserID) < 17 || len(account.UserID) > 19 {
+			return "", fmt.Errorf("invalid userID format: %s (should be 17-19 digit Discord snowflake)", account.UserID)
+		}
+
 		channel, err := s.UserChannelCreate(account.UserID)
 		if err != nil {
-			return "", fmt.Errorf("failed to create DM channel: %w", err)
+			return "", fmt.Errorf("failed to create DM channel for user %s: %w", account.UserID, err)
 		}
 		return channel.ID, nil
 	}
@@ -362,8 +375,18 @@ func DisableUserCaptcha(s *discordgo.Session, userID string, reason string) erro
 
 	settings.EZCaptchaAPIKey = ""
 	settings.CustomSettings = false
-	settings.CheckInterval = defaultSettings.CheckInterval
-	settings.NotificationInterval = defaultSettings.NotificationInterval
+	//settings.CheckInterval = defaultSettings.CheckInterval
+	//settings.NotificationInterval = defaultSettings.NotificationInterval
+
+	defaults, err := GetDefaultSettings()
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to get default settings, using hardcoded values")
+		settings.CheckInterval = 30
+		settings.NotificationInterval = 24
+	} else {
+		settings.CheckInterval = defaults.CheckInterval
+		settings.NotificationInterval = defaults.NotificationInterval
+	}
 
 	if err := database.DB.Save(&settings).Error; err != nil {
 		return err
@@ -949,7 +972,7 @@ func formatAccountStatus(account models.Account, status models.Status, timeUntil
 
 	switch status {
 	case models.StatusGood:
-		statusDesc.WriteString(fmt.Sprintf("Good standing | Expires in %s", FormatDuration(timeUntilExpiration)))
+		statusDesc.WriteString(fmt.Sprintf("Good standing | Expires in %s", FormatExpirationTime(account.SSOCookieExpiration)))
 	case models.StatusPermaban:
 		statusDesc.WriteString("Permanently banned")
 	case models.StatusShadowban:

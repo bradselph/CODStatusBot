@@ -802,6 +802,11 @@ func SolveCaptchaWithFallback(userID, siteKey, pageURL string) (string, string, 
 		return "", primaryProvider, fmt.Errorf("fallback disabled for default key users, primary provider failed: %w", err)
 	}
 
+	cfg := configuration.Get()
+	if cfg.Fallback.TimeoutSeconds > 0 {
+		logger.Log.Debugf("Using fallback timeout of %d seconds for user %s", cfg.Fallback.TimeoutSeconds, userID)
+	}
+
 	fallbackProvider := getFallbackProviderForUser(settings)
 	if fallbackProvider == "" || fallbackProvider == primaryProvider {
 		logger.Log.Warnf("No valid fallback provider available for user %s (fallback: %s, primary: %s)", userID, fallbackProvider, primaryProvider)

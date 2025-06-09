@@ -172,13 +172,6 @@ type Config struct {
 		QuestionCircle string
 	}
 
-	// TODO: Remove Sentry completely
-	Sentry struct {
-		DSN              string
-		TracesSampleRate float64
-		Debug            bool
-	}
-
 	ComponentsV2 struct {
 		Enabled bool
 	}
@@ -250,7 +243,6 @@ func Load() error {
 	loadShardingConfig()
 	loadProxyConfig()
 	loadRateLimitConfig()
-	loadSentryConfig() // TODO: Remove if possible
 	loadComponentsV2Config()
 	loadErrorHandlingConfig()
 	loadMessageConfig()
@@ -407,12 +399,6 @@ func loadProxyConfig() {
 func loadRateLimitConfig() {
 	AppConfig.RateLimit.GlobalWindow = time.Duration(getEnvAsInt("GLOBAL_RATE_LIMIT_WINDOW", 60)) * time.Second
 	AppConfig.RateLimit.APIWindow = time.Duration(getEnvAsInt("API_RATE_LIMIT_WINDOW", 10)) * time.Second
-}
-
-func loadSentryConfig() {
-	AppConfig.Sentry.DSN = os.Getenv("SENTRY_DSN")
-	AppConfig.Sentry.TracesSampleRate = getEnvAsFloat("SENTRY_TRACES_SAMPLE_RATE", 1.0)
-	AppConfig.Sentry.Debug = getEnvAsBool("SENTRY_DEBUG", false)
 }
 
 func validate() error {

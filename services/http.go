@@ -36,12 +36,6 @@ type BanResponse struct {
 	} `json:"bans"`
 }
 
-func init() {
-	cfg := configuration.Get()
-	InitHTTPClients()
-	logger.Log.Infof("Initialized endpoints: Profile URL: %s", cfg.API.ProfileEndpoint)
-}
-
 func VerifySSOCookie(ssoCookie string) bool {
 	cfg := configuration.Get()
 	logger.Log.Infof("Starting SSO cookie verification for cookie: %s", ssoCookie)

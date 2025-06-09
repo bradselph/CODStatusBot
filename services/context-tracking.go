@@ -36,9 +36,9 @@ func FormatDuration(d time.Duration) string {
 
 func formatVIPStatus(isVIP bool) string {
 	if isVIP {
-		return "VIP Member"
+		return "Yes"
 	}
-	return "Standard Member"
+	return "No"
 }
 
 func formatCheckStatus(isDisabled bool) string {
