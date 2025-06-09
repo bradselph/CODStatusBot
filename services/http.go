@@ -13,6 +13,7 @@ import (
 	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bwmarrin/discordgo"
 	"github.com/sirupsen/logrus"
 )
 
@@ -33,12 +34,6 @@ type BanResponse struct {
 		Title       string `json:"title"`
 		CanAppeal   bool   `json:"canAppeal"`
 	} `json:"bans"`
-}
-
-func init() {
-	cfg := configuration.Get()
-	InitHTTPClients()
-	logger.Log.Infof("Initialized endpoints: Profile URL: %s", cfg.API.ProfileEndpoint)
 }
 
 func VerifySSOCookie(ssoCookie string) bool {
@@ -121,14 +116,21 @@ func VerifySSOCookie(ssoCookie string) bool {
 func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models.Status, error) {
 	startTime := time.Now()
 	cfg := configuration.Get()
-	logger.Log.Info("Starting CheckAccount function")
+
+	var account models.Account
+	var accountInfo string = "Unknown"
+	if result := database.DB.Where("sso_cookie = ?", ssoCookie).First(&account); result.Error == nil {
+		accountInfo = fmt.Sprintf("%s (ID: %d, User: %s)", account.Title, account.ID, userID)
+	}
+
+	logger.Log.Infof("Starting CheckAccount function for account: %s", accountInfo)
 
 	var accountID uint = 0
 	var captchaProvider string = ""
 	var captchaCost float64 = 0.0
+	var usedFallback bool = false
 
-	var account models.Account
-	if result := database.DB.Where("sso_cookie = ?", ssoCookie).First(&account); result.Error == nil {
+	if account.ID != 0 {
 		accountID = account.ID
 	}
 
@@ -171,24 +173,15 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		userSettings.TwoCaptchaAPIKey == ""
 
 	if isUsingDefaultKey {
-		if !validateRateLimit(userID, "check_account", cfg.RateLimits.CheckNow) {
+		if !checkActionRateLimit(userID, "check_account", time.Hour) {
 			return models.StatusUnknown, fmt.Errorf("rate limit exceeded for default key users")
 		}
 	}
 
-	solver, err := GetCaptchaSolver(userID)
+	logger.Log.Infof("Solving captcha for account: %s using preferred provider: %s", accountInfo, userSettings.PreferredCaptchaProvider)
+	gRecaptchaResponse, usedProvider, err := SolveCaptchaWithFallback(userID, cfg.CaptchaService.RecaptchaSiteKey, cfg.CaptchaService.RecaptchaURL)
 	if err != nil {
-		if strings.Contains(err.Error(), "insufficient balance") {
-			if err := DisableUserCaptcha(nil, userID, "Insufficient balance"); err != nil {
-				logger.Log.WithError(err).Error("Failed to disable user captcha service")
-			}
-			return models.StatusUnknown, fmt.Errorf("critical error: %w", err)
-		}
-		return models.StatusUnknown, fmt.Errorf("failed to create captcha solver: %w", err)
-	}
-
-	gRecaptchaResponse, err := solver.SolveReCaptchaV2(cfg.CaptchaService.RecaptchaSiteKey, cfg.CaptchaService.RecaptchaURL)
-	if err != nil {
+		logger.Log.WithError(err).Errorf("Failed to solve captcha for account: %s", accountInfo)
 		if strings.Contains(err.Error(), "insufficient balance") {
 			if err := DisableUserCaptcha(nil, userID, "Insufficient balance"); err != nil {
 				logger.Log.WithError(err).Error("Failed to disable user captcha service")
@@ -198,13 +191,16 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		return models.StatusUnknown, fmt.Errorf("failed to solve reCAPTCHA: %w", err)
 	}
 
+	captchaProvider = usedProvider
+	usedFallback = (usedProvider != userSettings.PreferredCaptchaProvider)
+	logger.Log.Infof("Captcha solved for account: %s using provider: %s (fallback: %v, default key: %v)", accountInfo, usedProvider, usedFallback, isUsingDefaultKey)
+
 	if strings.Contains(gRecaptchaResponse, "Invalid") || len(gRecaptchaResponse) < 50 {
 		return models.StatusUnknown, fmt.Errorf("invalid captcha response received")
 	}
 
 	logger.Log.Info("Successfully received reCAPTCHA response")
 
-	//checkRequest := fmt.Sprintf("%s?locale=en&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
 	checkRequest := fmt.Sprintf("%s?locale=en_US&g-cc=%s", cfg.API.CheckEndpoint, gRecaptchaResponse)
 	logger.Log.WithField("url", checkRequest).Info("Constructed account check request")
 
@@ -387,7 +383,15 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 	LogAccountCheck(accountID, userID, "", err == nil,
 		captchaProvider, captchaCost, time.Since(startTime).Milliseconds())
 
-	logger.Log.Infof("Account status determined: %s, Rank Locked: %v", overallStatus, isRankLocked)
+	if accountID > 0 {
+		LogAccountStatusCheck(accountID, userID, overallStatus, "manual_check", "")
+	}
+
+	if usedFallback {
+		go notifyUserAboutFallbackUsage(userID, userSettings.PreferredCaptchaProvider, usedProvider)
+	}
+
+	logger.Log.Infof("CheckAccount completed for account: %s - Status: %s, Rank Locked: %v, Duration: %v", accountInfo, overallStatus, isRankLocked, time.Since(startTime))
 	return overallStatus, nil
 }
 
@@ -643,4 +647,101 @@ func ValidateAndGetAccountInfo(ssoCookie string) (*AccountValidationResult, erro
 		ExpiresAt:   expirationTimestamp,
 		ProfileData: profileData,
 	}, nil
+}
+
+func notifyUserAboutFallbackUsage(userID, primaryProvider, usedProvider string) {
+	settings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to get user settings for fallback notification")
+		return
+	}
+
+	hasCustomKey := settings.CapSolverAPIKey != "" || settings.EZCaptchaAPIKey != "" || settings.TwoCaptchaAPIKey != ""
+	if hasCustomKey {
+		return
+	}
+
+	if settings.HasSeenFallbackNotice {
+		return
+	}
+
+	lastNotificationKey := fmt.Sprintf("fallback_used_%s", usedProvider)
+	settings.EnsureMapsInitialized()
+
+	if lastNotification, exists := settings.LastCommandTimes[lastNotificationKey]; exists {
+		if time.Since(lastNotification) < 24*time.Hour {
+			return
+		}
+	}
+
+	settings.LastCommandTimes[lastNotificationKey] = time.Now()
+	if err := database.DB.Save(&settings).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to save fallback notification timestamp")
+	}
+
+	var account models.Account
+	if err := database.DB.Where("user_id = ?", userID).Order("updated_at DESC").First(&account).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to find account for fallback notification")
+		return
+	}
+
+	providerNames := map[string]string{
+		"capsolver": "Capsolver",
+		"ezcaptcha": "EZCaptcha",
+		"2captcha":  "2Captcha",
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "Fallback Captcha Service Used",
+		Description: fmt.Sprintf("Your account check was completed using **%s** as a fallback service after **%s** failed.", providerNames[usedProvider], providerNames[primaryProvider]),
+		Color:       0xFFA500,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "Primary Provider",
+				Value:  providerNames[primaryProvider],
+				Inline: true,
+			},
+			{
+				Name:   "Fallback Used",
+				Value:  providerNames[usedProvider],
+				Inline: true,
+			},
+			{
+				Name:   "Why Use Your Own Key?",
+				Value:  "• Higher reliability\n• Faster check times\n• Support the bot development\n• Priority processing",
+				Inline: false,
+			},
+			{
+				Name:   "Get Your Own Key",
+				Value:  fmt.Sprintf("Sign up for %s using our referral link to help keep the bot free for everyone!", providerNames[usedProvider]),
+				Inline: false,
+			},
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	if usedProvider == "capsolver" {
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   "Sign Up Link",
+			Value:  "[Get Capsolver API Key](https://dashboard.capsolver.com/passport/register?inviteCode=6YjROhACQnvP)",
+			Inline: false,
+		})
+	}
+
+	components := []discordgo.MessageComponent{
+		discordgo.Button{
+			Label:    "Don't Show This Again",
+			Style:    discordgo.SecondaryButton,
+			CustomID: "dismiss_fallback_notice",
+		},
+		discordgo.Button{
+			Label:    "Set Up My Own Key",
+			Style:    discordgo.PrimaryButton,
+			CustomID: "set_captcha_from_notice",
+		},
+	}
+
+	if err := SendNotificationWithComponentsV2(nil, account, embed, "", "fallback_usage_notice", components); err != nil {
+		logger.Log.WithError(err).Error("Failed to send fallback usage notification")
+	}
 }

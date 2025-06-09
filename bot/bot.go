@@ -26,7 +26,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const BotStatusMessage = "the Status of your Accounts so you dont have to."
+const StatusMessage = "the Status of your Accounts so you dont have to."
 
 var discord *discordgo.Session
 
@@ -58,7 +58,7 @@ func StartBot() (*discordgo.Session, error) {
 		return nil, err
 	}
 
-	err = discord.UpdateWatchStatus(0, BotStatusMessage)
+	err = discord.UpdateWatchStatus(0, StatusMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -67,23 +67,33 @@ func StartBot() (*discordgo.Session, error) {
 	logger.Log.Info("Registering global commands")
 
 	discord.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if i.GuildID != "" {
-			appShardManager := services.GetAppShardManager()
-			if !appShardManager.GuildBelongsToInstance(i.GuildID) {
-				assignedShard := appShardManager.GetGuildShardID(i.GuildID)
-				logger.Log.Debugf("Skipping interaction in guild %s (assigned to shard %d, this is shard %d)",
-					i.GuildID, assignedShard, appShardManager.ShardID)
-				return
-			}
+		defer services.RecoverFromPanic("interaction_handler")
+
+		if err := services.ValidateInteractionContext(i); err != nil {
+			logger.Log.WithError(err).Error("Invalid interaction context")
+			return
+		}
+
+		appShardManager := services.GetAppShardManager()
+		if !appShardManager.Initialized {
+			logger.Log.Debug("App shard manager not initialized, processing interaction")
 		} else {
-			userID := getUserIDFromInteraction(i)
-			if userID != "" {
-				appShardManager := services.GetAppShardManager()
-				if !appShardManager.ShardBelongsToInstance(userID) {
-					assignedShard := appShardManager.GetUserShardID(userID)
-					logger.Log.Debugf("Skipping direct message interaction from user %s (assigned to shard %d, this is shard %d)",
-						userID, assignedShard, appShardManager.ShardID)
+			if i.GuildID != "" {
+				if !appShardManager.GuildBelongsToInstance(i.GuildID) {
+					assignedShard := appShardManager.GetGuildShardID(i.GuildID)
+					logger.Log.Debugf("Skipping interaction in guild %s (assigned to shard %d, this is shard %d)",
+						i.GuildID, assignedShard, appShardManager.ShardID)
 					return
+				}
+			} else {
+				userID := getUserIDFromInteraction(i)
+				if userID != "" {
+					if !appShardManager.ShardBelongsToInstance(userID) {
+						assignedShard := appShardManager.GetUserShardID(userID)
+						logger.Log.Debugf("Skipping direct message interaction from user %s (assigned to shard %d, this is shard %d)",
+							userID, assignedShard, appShardManager.ShardID)
+						return
+					}
 				}
 			}
 		}
@@ -106,27 +116,28 @@ func StartBot() (*discordgo.Session, error) {
 			return
 		}
 
-		if m.GuildID != "" {
-			appShardManager := services.GetAppShardManager()
-			if !appShardManager.GuildBelongsToInstance(m.GuildID) {
-				assignedShard := appShardManager.GetGuildShardID(m.GuildID)
-				logger.Log.Debugf("Skipping message in guild %s (assigned to shard %d, this is shard %d)",
-					m.GuildID, assignedShard, appShardManager.ShardID)
-				return
-			}
-		} else {
-			appShardManager := services.GetAppShardManager()
-			if !appShardManager.ShardBelongsToInstance(m.Author.ID) {
-				assignedShard := appShardManager.GetUserShardID(m.Author.ID)
-				logger.Log.Debugf("Skipping direct message from user %s (assigned to shard %d, this is shard %d)",
-					m.Author.ID, assignedShard, appShardManager.ShardID)
-				return
+		appShardManager := services.GetAppShardManager()
+		if appShardManager.Initialized {
+			if m.GuildID != "" {
+				if !appShardManager.GuildBelongsToInstance(m.GuildID) {
+					assignedShard := appShardManager.GetGuildShardID(m.GuildID)
+					logger.Log.Debugf("Skipping message in guild %s (assigned to shard %d, this is shard %d)",
+						m.GuildID, assignedShard, appShardManager.ShardID)
+					return
+				}
+			} else {
+				if !appShardManager.ShardBelongsToInstance(m.Author.ID) {
+					assignedShard := appShardManager.GetUserShardID(m.Author.ID)
+					logger.Log.Debugf("Skipping direct message from user %s (assigned to shard %d, this is shard %d)",
+						m.Author.ID, assignedShard, appShardManager.ShardID)
+					return
+				}
 			}
 		}
 
 		channel, err := s.Channel(m.ChannelID)
 		if err == nil && channel.Type == discordgo.ChannelTypeDM {
-			logger.Log.Infof("Received DM from user %s (assigned to this shard): %s", m.Author.Username, m.Content)
+			logger.Log.Infof("Received DM from user %s: %s", m.Author.Username, m.Content)
 		}
 	})
 
@@ -151,7 +162,11 @@ func getUserIDFromInteraction(i *discordgo.InteractionCreate) string {
 }
 
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	defer services.RecoverFromPanic("handleModalSubmit")
+
 	customID := i.ModalSubmitData().CustomID
+	logger.Log.WithField("customID", customID).Debug("Handling modal submit")
+
 	switch {
 	case strings.HasPrefix(customID, "set_notifications_modal_"):
 		setnotifications.HandleModalSubmit(s, i)
@@ -172,16 +187,27 @@ func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		verdansk.HandleActivisionIDModal(s, i)
 	default:
 		logger.Log.WithField("customID", customID).Error("Unknown modal submission")
+		if err := services.RespondWithPreference(s, i, "Unknown modal submission. Please try again.", nil, true); err != nil {
+			logger.Log.WithError(err).Error("Failed to respond to unknown modal")
+		}
 	}
 }
 
 func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	defer services.RecoverFromPanic("handleMessageComponent")
+
 	customID := i.MessageComponentData().CustomID
+	logger.Log.WithField("customID", customID).Debug("Handling message component")
+
 	switch {
 	case customID == "listaccounts":
 		listaccounts.CommandListAccounts(s, i)
 	case strings.HasPrefix(customID, "set_captcha_"):
 		setcaptchaservice.HandleCaptchaServiceSelection(s, i)
+	case customID == "toggle_fallback_enabled" || strings.HasPrefix(customID, "set_fallback_") || customID == "captcha_main_menu":
+		setcaptchaservice.HandleFallbackSettingsInteraction(s, i)
+	case customID == "dismiss_fallback_notice" || customID == "set_captcha_from_notice":
+		setcaptchaservice.HandleFallbackNoticeInteraction(s, i)
 	case strings.HasPrefix(customID, "feedback_"):
 		feedback.HandleFeedbackChoice(s, i)
 	case strings.HasPrefix(customID, "set_ephemeral_"):
@@ -212,5 +238,8 @@ func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate
 		verdansk.HandleAccountSelection(s, i)
 	default:
 		logger.Log.WithField("customID", customID).Error("Unknown message component interaction")
+		if err := services.RespondWithPreference(s, i, "Unknown interaction. Please try again.", nil, true); err != nil {
+			logger.Log.WithError(err).Error("Failed to respond to unknown component")
+		}
 	}
 }

@@ -13,6 +13,14 @@ import (
 
 var defaultSettings models.UserSettings
 
+func init() {
+	initDefaultSettings()
+}
+
+func InitDefaultSettings() {
+	initDefaultSettings()
+}
+
 func initDefaultSettings() {
 	cfg := configuration.Get()
 	defaultSettings = models.UserSettings{
@@ -22,19 +30,52 @@ func initDefaultSettings() {
 		StatusChangeCooldown:     cfg.Intervals.StatusChange,
 		NotificationType:         "channel",
 		PreferredCaptchaProvider: "capsolver",
+		FallbackCaptchaProvider:  "ezcaptcha",
+		EnableFallback:           true,
+		UseFallbackForDefault:    true,
 		CustomSettings:           false,
 	}
 
 	if cfg.CaptchaService.Capsolver.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "capsolver"
+		if cfg.CaptchaService.EZCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "ezcaptcha"
+		} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "2captcha"
+		} else {
+			defaultSettings.FallbackCaptchaProvider = ""
+			defaultSettings.EnableFallback = false
+		}
 	} else if cfg.CaptchaService.EZCaptcha.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "ezcaptcha"
+		if cfg.CaptchaService.Capsolver.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "capsolver"
+		} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "2captcha"
+		} else {
+			defaultSettings.FallbackCaptchaProvider = ""
+			defaultSettings.EnableFallback = false
+		}
 	} else if cfg.CaptchaService.TwoCaptcha.Enabled {
 		defaultSettings.PreferredCaptchaProvider = "2captcha"
+		if cfg.CaptchaService.Capsolver.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "capsolver"
+		} else if cfg.CaptchaService.EZCaptcha.Enabled {
+			defaultSettings.FallbackCaptchaProvider = "ezcaptcha"
+		} else {
+			defaultSettings.FallbackCaptchaProvider = ""
+			defaultSettings.EnableFallback = false
+		}
+	} else {
+		logger.Log.Warn("No captcha services are enabled - functionality will be limited")
+		defaultSettings.PreferredCaptchaProvider = "capsolver"
+		defaultSettings.FallbackCaptchaProvider = "ezcaptcha"
+		defaultSettings.EnableFallback = false
 	}
 }
 
 func GetUserSettings(userID string) (models.UserSettings, error) {
+	cfg := configuration.Get()
 	logger.Log.Infof("Getting user settings for user: %s", userID)
 
 	var settings models.UserSettings
@@ -43,7 +84,6 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 		return models.UserSettings{}, fmt.Errorf("error getting user settings: %w", result.Error)
 	}
 
-	// Check if user has custom API key
 	hasCustomKey := settings.CapSolverAPIKey != "" ||
 		settings.EZCaptchaAPIKey != "" ||
 		settings.TwoCaptchaAPIKey != ""
@@ -51,7 +91,38 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 	settings.EnsureMapsInitialized()
 
 	if settings.PreferredCaptchaProvider == "" {
-		settings.PreferredCaptchaProvider = "capsolver"
+		if cfg.CaptchaService.Capsolver.Enabled {
+			settings.PreferredCaptchaProvider = "capsolver"
+		} else if cfg.CaptchaService.EZCaptcha.Enabled {
+			settings.PreferredCaptchaProvider = "ezcaptcha"
+		} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+			settings.PreferredCaptchaProvider = "2captcha"
+		} else {
+			settings.PreferredCaptchaProvider = "capsolver"
+		}
+	}
+
+	if settings.FallbackCaptchaProvider == "" {
+		switch settings.PreferredCaptchaProvider {
+		case "capsolver":
+			if cfg.CaptchaService.EZCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "ezcaptcha"
+			} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "2captcha"
+			}
+		case "ezcaptcha":
+			if cfg.CaptchaService.Capsolver.Enabled {
+				settings.FallbackCaptchaProvider = "capsolver"
+			} else if cfg.CaptchaService.TwoCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "2captcha"
+			}
+		case "2captcha":
+			if cfg.CaptchaService.Capsolver.Enabled {
+				settings.FallbackCaptchaProvider = "capsolver"
+			} else if cfg.CaptchaService.EZCaptcha.Enabled {
+				settings.FallbackCaptchaProvider = "ezcaptcha"
+			}
+		}
 	}
 
 	if settings.LastDailyUpdateNotification.IsZero() {
@@ -78,6 +149,10 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 
 	if settings.PreferredCaptchaProvider == "" {
 		settings.PreferredCaptchaProvider = "capsolver"
+	}
+
+	if settings.FallbackCaptchaProvider == "" {
+		settings.FallbackCaptchaProvider = GetFallbackProvider(settings.PreferredCaptchaProvider)
 	}
 
 	settings.CustomSettings = hasCustomKey
@@ -192,7 +267,6 @@ func GetUserCaptchaKey(userID string) (string, float64, error) {
 		}
 	}
 
-	// If no custom key is set or no specific provider is selected, use default Capsolver
 	if cfg.CaptchaService.Capsolver.Enabled {
 		defaultKey := cfg.CaptchaService.Capsolver.ClientKey
 		isValid, balance, err := ValidateCaptchaKey(defaultKey, "capsolver")
@@ -205,7 +279,6 @@ func GetUserCaptchaKey(userID string) (string, float64, error) {
 		return defaultKey, balance, nil
 	}
 
-	// If Capsolver is disabled, try other enabled services in order of preference
 	if cfg.CaptchaService.EZCaptcha.Enabled {
 		settings.PreferredCaptchaProvider = "ezcaptcha"
 		if err := database.DB.Save(&settings).Error; err != nil {
@@ -254,12 +327,10 @@ func RemoveCaptchaKey(userID string) error {
 		return result.Error
 	}
 
-	// Check if user had custom keys before removal
 	hadCustomKey := settings.CapSolverAPIKey != "" ||
 		settings.EZCaptchaAPIKey != "" ||
 		settings.TwoCaptchaAPIKey != ""
 
-	// Get configuration and count accounts only once
 	cfg := configuration.Get()
 	var accountCount int64
 	if err := database.DB.Model(&models.Account{}).Where("user_id = ?", userID).Count(&accountCount).Error; err != nil {
@@ -270,8 +341,10 @@ func RemoveCaptchaKey(userID string) error {
 	settings.EZCaptchaAPIKey = ""
 	settings.TwoCaptchaAPIKey = ""
 
-	// Reset to default settings
 	settings.PreferredCaptchaProvider = defaultSettings.PreferredCaptchaProvider
+	settings.FallbackCaptchaProvider = defaultSettings.FallbackCaptchaProvider
+	settings.EnableFallback = defaultSettings.EnableFallback
+	settings.UseFallbackForDefault = defaultSettings.UseFallbackForDefault
 	settings.CustomSettings = false
 	settings.CheckInterval = defaultSettings.CheckInterval
 	settings.NotificationInterval = defaultSettings.NotificationInterval
@@ -283,7 +356,6 @@ func RemoveCaptchaKey(userID string) error {
 
 	defaultMax := cfg.RateLimits.DefaultMaxAccounts
 
-	// If user exceeds default limits, send warning
 	if int64(defaultMax) < accountCount {
 		var accounts []models.Account
 		if err := database.DB.Where("user_id = ?", userID).Find(&accounts).Error; err != nil {
@@ -291,7 +363,6 @@ func RemoveCaptchaKey(userID string) error {
 			return err
 		}
 
-		// Update all accounts to default notification type
 		for _, account := range accounts {
 			account.NotificationType = defaultSettings.NotificationType
 			if err := database.DB.Save(&account).Error; err != nil {
@@ -299,7 +370,6 @@ func RemoveCaptchaKey(userID string) error {
 			}
 		}
 
-		// Create warning embed
 		embed := &discordgo.MessageEmbed{
 			Title: "Account Limit Warning",
 			Description: fmt.Sprintf("You currently have %d accounts monitored, which exceeds the default limit of %d accounts.\n"+
@@ -326,7 +396,6 @@ func RemoveCaptchaKey(userID string) error {
 			Timestamp: time.Now().Format(time.RFC3339),
 		}
 
-		// Send warning notification
 		if len(accounts) > 0 {
 			if err := SendNotification(nil, accounts[0], embed, "", "api_key_removal_warning"); err != nil {
 				logger.Log.WithError(err).Error("Failed to send API key removal warning")
@@ -334,7 +403,6 @@ func RemoveCaptchaKey(userID string) error {
 		}
 	}
 
-	// Save updated settings
 	if err := database.DB.Save(&settings).Error; err != nil {
 		logger.Log.WithError(err).Error("Error saving user settings")
 		return err

@@ -11,7 +11,6 @@ import (
 )
 
 type Config struct {
-	// Admin API Endpoints
 	Admin struct {
 		Port           int
 		APIKey         string
@@ -33,11 +32,9 @@ type Config struct {
 		DbMaxOpenConns int `json:"db_max_open_conns"`
 	}
 
-	// Environment
 	Environment string
 	LogDir      string
 
-	// Database Settings
 	Database struct {
 		User     string
 		Password string
@@ -47,7 +44,6 @@ type Config struct {
 		Var      string
 	}
 
-	// Discord Settings
 	Discord struct {
 		Token       string
 		DeveloperID string
@@ -55,7 +51,6 @@ type Config struct {
 		PublicKey   string
 	}
 
-	// Proxy Configuration
 	Proxy struct {
 		Enabled          bool
 		Proxies          []string
@@ -66,13 +61,11 @@ type Config struct {
 		UserAgents       []string
 	}
 
-	// Rate Limiting Settings
 	RateLimit struct {
 		GlobalWindow time.Duration
 		APIWindow    time.Duration
 	}
 
-	// Captcha Service Settings
 	CaptchaService struct {
 		Capsolver struct {
 			Enabled       bool
@@ -117,7 +110,6 @@ type Config struct {
 		RetryInterval time.Duration
 	}
 
-	// API Endpoints
 	API struct {
 		CheckEndpoint           string
 		ProfileEndpoint         string
@@ -126,7 +118,6 @@ type Config struct {
 		RedeemCodeEndpoint      string
 	}
 
-	// Rate Limits and Intervals
 	RateLimits struct {
 		CheckNow           time.Duration
 		Default            time.Duration
@@ -134,7 +125,6 @@ type Config struct {
 		PremiumMaxAccounts int
 	}
 
-	// Intervals
 	Intervals struct {
 		Check              int
 		Notification       float64
@@ -147,7 +137,6 @@ type Config struct {
 		TempBanUpdate      float64
 	}
 
-	// User Management Settings
 	Users struct {
 		MaxMessageFailures     int
 		InactiveUserPeriod     time.Duration
@@ -155,7 +144,6 @@ type Config struct {
 		CleanupInterval        time.Duration
 	}
 
-	// Verdansk Stats Settings
 	Verdansk struct {
 		PreferencesEndpoint string
 		StatsEndpoint       string
@@ -166,7 +154,6 @@ type Config struct {
 		MaxRequestsPerDay   int
 	}
 
-	// Notification Settings
 	Notifications struct {
 		DefaultCooldown      time.Duration
 		MaxPerHour           int
@@ -177,7 +164,6 @@ type Config struct {
 		BackoffHistoryWindow time.Duration
 	}
 
-	// Emoji Settings
 	Emojis struct {
 		CheckCircle    string
 		BanCircle      string
@@ -186,11 +172,34 @@ type Config struct {
 		QuestionCircle string
 	}
 
-	// Sentry Settings
-	Sentry struct {
-		DSN              string
-		TracesSampleRate float64
-		Debug            bool
+	ComponentsV2 struct {
+		Enabled bool
+	}
+
+	ErrorHandling struct {
+		MaxConsecutiveErrors           int
+		CookieExpirationWarningHours   int
+		AccountErrorThreshold          int
+		ErrorNotificationCooldownHours int
+	}
+
+	Startup struct {
+		TimeoutSeconds      int
+		ShutdownTimeout     time.Duration
+		HealthCheckInterval time.Duration
+	}
+
+	Message struct {
+		MaxLength        int
+		MaxEmbedFields   int
+		MaxComponentRows int
+		EmbedDescLimit   int
+	}
+
+	Fallback struct {
+		TimeoutSeconds    int
+		RetryAttempts     int
+		BackoffMultiplier float64
 	}
 }
 
@@ -220,6 +229,7 @@ func Load() error {
 	AppConfig.Discord.ClientID = os.Getenv("DISCORD_CLIENT_ID")
 	AppConfig.Discord.PublicKey = os.Getenv("DISCORD_PUBLIC_KEY")
 
+	loadStartupConfig()
 	loadAdminConfig()
 	loadCaptchaConfig()
 	loadAPIEndpoints()
@@ -233,7 +243,10 @@ func Load() error {
 	loadShardingConfig()
 	loadProxyConfig()
 	loadRateLimitConfig()
-	loadSentryConfig()
+	loadComponentsV2Config()
+	loadErrorHandlingConfig()
+	loadMessageConfig()
+	loadFallbackConfig()
 
 	if err := validate(); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
@@ -277,7 +290,6 @@ func loadNotificationSettings() {
 }
 
 func loadCaptchaConfig() {
-	// Capsolver
 	AppConfig.CaptchaService.Capsolver.Enabled = os.Getenv("CAPSOLVER_ENABLED") == "true"
 	AppConfig.CaptchaService.Capsolver.ClientKey = os.Getenv("CAPSOLVER_CLIENT_KEY")
 	AppConfig.CaptchaService.Capsolver.AppID = os.Getenv("CAPSOLVER_APP_ID")
@@ -285,23 +297,20 @@ func loadCaptchaConfig() {
 	AppConfig.CaptchaService.Capsolver.MaxRetries = getEnvAsInt("CAPSOLVER_MAX_RETRIES", 6)
 	AppConfig.CaptchaService.Capsolver.RetryInterval = time.Duration(getEnvAsInt("CAPSOLVER_RETRY_INTERVAL", 10)) * time.Second
 
-	// EZCaptcha
 	AppConfig.CaptchaService.EZCaptcha.Enabled = os.Getenv("EZCAPTCHA_ENABLED") == "true"
 	AppConfig.CaptchaService.EZCaptcha.ClientKey = os.Getenv("EZCAPTCHA_CLIENT_KEY")
 	AppConfig.CaptchaService.EZCaptcha.AppID = os.Getenv("EZAPPID")
 	AppConfig.CaptchaService.EZCaptcha.BalanceMin = getEnvAsFloat("EZCAPBALMIN", 50)
 
-	// 2Captcha
 	AppConfig.CaptchaService.TwoCaptcha.Enabled = os.Getenv("TWOCAPTCHA_ENABLED") == "true"
+	AppConfig.CaptchaService.TwoCaptcha.ClientKey = os.Getenv("TWOCAPTCHA_CLIENT_KEY")
 	AppConfig.CaptchaService.TwoCaptcha.SoftID = os.Getenv("SOFT_ID")
 	AppConfig.CaptchaService.TwoCaptcha.BalanceMin = getEnvAsFloat("TWOCAPBALMIN", 0.10)
 
-	// Common Captcha Settings
 	AppConfig.CaptchaService.RecaptchaSiteKey = os.Getenv("RECAPTCHA_SITE_KEY")
 	AppConfig.CaptchaService.RecaptchaURL = os.Getenv("RECAPTCHA_URL")
 	AppConfig.CaptchaService.MaxRetries = getEnvAsInt("MAX_RETRIES", 3)
 
-	// Captcha Endpoints
 	AppConfig.CaptchaEndpoints.Capsolver.Create = getEnvWithDefault("CAPSOLVER_CREATE_ENDPOINT", "https://api.capsolver.com/createTask")
 	AppConfig.CaptchaEndpoints.Capsolver.Result = getEnvWithDefault("CAPSOLVER_RESULT_ENDPOINT", "https://api.capsolver.com/getTaskResult")
 	AppConfig.CaptchaEndpoints.Capsolver.Feedback = getEnvWithDefault("CAPSOLVER_FEEDBACK_ENDPOINT", "https://api.capsolver.com/feedbackTask")
@@ -382,10 +391,7 @@ func loadProxyConfig() {
 	} else {
 		AppConfig.Proxy.UserAgents = []string{
 			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
 			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.2623.71",
-			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
 		}
 	}
 }
@@ -393,12 +399,6 @@ func loadProxyConfig() {
 func loadRateLimitConfig() {
 	AppConfig.RateLimit.GlobalWindow = time.Duration(getEnvAsInt("GLOBAL_RATE_LIMIT_WINDOW", 60)) * time.Second
 	AppConfig.RateLimit.APIWindow = time.Duration(getEnvAsInt("API_RATE_LIMIT_WINDOW", 10)) * time.Second
-}
-
-func loadSentryConfig() {
-	AppConfig.Sentry.DSN = os.Getenv("SENTRY_DSN")
-	AppConfig.Sentry.TracesSampleRate = getEnvAsFloat("SENTRY_TRACES_SAMPLE_RATE", 1.0)
-	AppConfig.Sentry.Debug = getEnvAsBool("SENTRY_DEBUG", false)
 }
 
 func validate() error {
@@ -439,7 +439,7 @@ func validate() error {
 	}
 
 	if AppConfig.CaptchaService.Capsolver.Enabled && AppConfig.CaptchaService.Capsolver.ClientKey == "" {
-		return fmt.Errorf("Capsolver is enabled but no client key provided")
+		return fmt.Errorf("capsolver is enabled but no client key provided")
 	}
 	if AppConfig.CaptchaService.EZCaptcha.Enabled && AppConfig.CaptchaService.EZCaptcha.ClientKey == "" {
 		return fmt.Errorf("EZCaptcha is enabled but no client key provided")
@@ -468,14 +468,12 @@ func logConfigurationValues() {
 		AppConfig.RateLimits.CheckNow,
 		AppConfig.RateLimits.Default)
 
-	// Log user management settings
 	logger.Log.Infof("Loaded user management settings: MAX_MESSAGE_FAILURES=%d, INACTIVE_USER_DAYS=%.2f, "+
 		"UNREACHABLE_RESET_DAYS=%.2f",
 		AppConfig.Users.MaxMessageFailures,
 		AppConfig.Users.InactiveUserPeriod.Hours()/24,
 		AppConfig.Users.UnreachableResetPeriod.Hours()/24)
 
-	// Log notification settings
 	logger.Log.Infof("Loaded notification settings: DEFAULT_COOLDOWN=%v, MAX_PER_HOUR=%d, "+
 		"MAX_PER_DAY=%d, MIN_INTERVAL=%v",
 		AppConfig.Notifications.DefaultCooldown,
@@ -483,7 +481,6 @@ func logConfigurationValues() {
 		AppConfig.Notifications.MaxPerDay,
 		AppConfig.Notifications.MinInterval)
 
-	// Log admin API settings
 	logger.Log.Infof("Loaded admin API settings: ENABLED=%v, PORT=%d, STATS_RATE_LIMIT=%.2f, "+
 		"RETENTION_DAYS=%d",
 		AppConfig.Admin.Enabled,
@@ -491,7 +488,6 @@ func logConfigurationValues() {
 		AppConfig.Admin.StatsRateLimit,
 		AppConfig.Admin.RetentionDays)
 
-	// Log proxy settings
 	if AppConfig.Proxy.Enabled {
 		logger.Log.Infof("Loaded proxy settings: ENABLED=%v, PROXIES=%d, STRATEGY=%s, MAX_FAILURES=%d",
 			AppConfig.Proxy.Enabled,
@@ -502,7 +498,6 @@ func logConfigurationValues() {
 		logger.Log.Info("Proxy configuration: DISABLED")
 	}
 
-	// Log enabled captcha services
 	var enabledServices []string
 	if AppConfig.CaptchaService.Capsolver.Enabled {
 		enabledServices = append(enabledServices, "Capsolver")
@@ -623,4 +618,36 @@ func loadShardingConfig() {
 	} else {
 		logger.Log.Info("Sharding disabled: Running in single instance mode")
 	}
+}
+
+func loadComponentsV2Config() {
+	AppConfig.ComponentsV2.Enabled = getEnvAsBool("COMPONENTS_V2_ENABLED", true)
+}
+
+func loadErrorHandlingConfig() {
+	AppConfig.ErrorHandling.MaxConsecutiveErrors = getEnvAsInt("MAX_CONSECUTIVE_ERRORS", 25)
+	AppConfig.ErrorHandling.CookieExpirationWarningHours = getEnvAsInt("COOKIE_EXPIRATION_WARNING_HOURS", 24)
+	AppConfig.ErrorHandling.AccountErrorThreshold = getEnvAsInt("ACCOUNT_ERROR_THRESHOLD", 50)
+	AppConfig.ErrorHandling.ErrorNotificationCooldownHours = getEnvAsInt("ERROR_NOTIFICATION_COOLDOWN_HOURS", 6)
+}
+
+func loadStartupConfig() {
+	AppConfig.Startup.TimeoutSeconds = getEnvAsInt("STARTUP_TIMEOUT_SECONDS", 30)
+	shutdownTimeout := getEnvAsInt("SHUTDOWN_TIMEOUT_SECONDS", 15)
+	AppConfig.Startup.ShutdownTimeout = time.Duration(shutdownTimeout) * time.Second
+	healthCheckInterval := getEnvAsInt("HEALTH_CHECK_INTERVAL_SECONDS", 60)
+	AppConfig.Startup.HealthCheckInterval = time.Duration(healthCheckInterval) * time.Second
+}
+
+func loadMessageConfig() {
+	AppConfig.Message.MaxLength = getEnvAsInt("MAX_MESSAGE_LENGTH", 2000)
+	AppConfig.Message.MaxEmbedFields = getEnvAsInt("MAX_EMBED_FIELDS", 25)
+	AppConfig.Message.MaxComponentRows = getEnvAsInt("MAX_COMPONENT_ROWS", 5)
+	AppConfig.Message.EmbedDescLimit = getEnvAsInt("EMBED_DESCRIPTION_LIMIT", 4096)
+}
+
+func loadFallbackConfig() {
+	AppConfig.Fallback.TimeoutSeconds = getEnvAsInt("FALLBACK_TIMEOUT_SECONDS", 30)
+	AppConfig.Fallback.RetryAttempts = getEnvAsInt("FALLBACK_RETRY_ATTEMPTS", 3)
+	AppConfig.Fallback.BackoffMultiplier = getEnvAsFloat("FALLBACK_BACKOFF_MULTIPLIER", 2.0)
 }

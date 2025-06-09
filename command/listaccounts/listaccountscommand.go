@@ -2,16 +2,18 @@ package listaccounts
 
 import (
 	"fmt"
-	"os"
 	"time"
 
+	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
 	"github.com/bradselph/CODStatusBot/models"
 	"github.com/bradselph/CODStatusBot/services"
+	"github.com/bradselph/CODStatusBot/utils"
 	"github.com/bwmarrin/discordgo"
 )
 
+/*
 var (
 	//	checkCircle    = os.Getenv("CHECKCIRCLE")
 	banCircle = os.Getenv("BANCIRCLE")
@@ -19,27 +21,25 @@ var (
 	stopWatch      = os.Getenv("STOPWATCH")
 	questionCircle = os.Getenv("QUESTIONCIRCLE")
 )
+*/
 
 func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.DeferWithPreference(s, i, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to defer response")
 		return
 	}
 
-	var userID string
-	if i.Member != nil {
-		userID = i.Member.User.ID
-	} else if i.User != nil {
-		userID = i.User.ID
-	} else {
-		logger.Log.Error("Interaction doesn't have Member or User")
+	userID, err := services.GetUserID(i)
+	if err != nil {
+		logger.Log.WithError(err).Error("Could not determine user ID")
 		sendFollowup(s, i, "An error occurred while processing your request.")
+		return
+	}
+
+	if err := utils.ValidateDiscordUserID(userID); err != nil {
+		logger.Log.WithError(err).WithField("userID", userID).Error("Invalid user ID")
+		sendFollowup(s, i, "Invalid user ID provided.")
 		return
 	}
 
@@ -69,6 +69,8 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		Fields:      make([]*discordgo.MessageEmbedField, 0),
 	}
 
+	cfg := configuration.Get()
+
 	for _, account := range accounts {
 		checkStatus := services.GetCheckStatus(account.IsCheckDisabled)
 		cookieExpiration := services.FormatExpirationTime(account.SSOCookieExpiration)
@@ -88,13 +90,13 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		fieldValue := fmt.Sprintf("Status: %s\n", account.LastStatus)
 
 		if account.IsPermabanned {
-			fieldValue += banCircle + "Account Permanently Banned\n"
+			fieldValue += cfg.Emojis.BanCircle + "Account Permanently Banned\n"
 		}
 		if account.IsTempbanned {
-			fieldValue += stopWatch + "Account Temporarily Banned\n"
+			fieldValue += cfg.Emojis.StopWatch + "Account Temporarily Banned\n"
 		}
 		if account.IsShadowbanned {
-			fieldValue += questionCircle + "Account Under Review\n"
+			fieldValue += cfg.Emojis.QuestionCircle + "Account Under Review\n"
 		}
 		if account.IsExpiredCookie {
 			fieldValue += "⚠ Cookie Expired\n"
@@ -124,20 +126,16 @@ func CommandListAccounts(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 	}
 
-	_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Embeds: []*discordgo.MessageEmbed{embed},
-		Flags:  discordgo.MessageFlagsEphemeral,
-	})
+	embed = services.ValidateEmbedLimits(embed)
+
+	_, err = services.FollowupWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}
 }
 
 func sendFollowup(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: content,
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, content, nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}
@@ -161,14 +159,38 @@ func getBalanceInfo(userID string) string {
 		return ""
 	}
 
-	apiKey, balance, err := services.GetUserCaptchaKey(userID)
-	if err != nil {
-		logger.Log.WithError(err).Error("Error getting user captcha key")
-		return ""
+	hasCustomKey := userSettings.CapSolverAPIKey != "" ||
+		userSettings.EZCaptchaAPIKey != "" ||
+		userSettings.TwoCaptchaAPIKey != ""
+
+	if !hasCustomKey {
+		return "\n\nYou are using the bot's default API key. Consider setting up your own key using /setcaptchaservice for unlimited checks."
 	}
 
-	if apiKey == "" {
-		return "\n\nYou are using the bot's default API key. Consider setting up your own key using /setcaptchaservice for unlimited checks."
+	var balance float64
+	var providerName string
+
+	switch userSettings.PreferredCaptchaProvider {
+	case "capsolver":
+		if userSettings.CapSolverAPIKey != "" {
+			_, balance, err = services.ValidateCaptchaKey(userSettings.CapSolverAPIKey, "capsolver")
+			providerName = "Capsolver"
+		}
+	case "ezcaptcha":
+		if userSettings.EZCaptchaAPIKey != "" {
+			_, balance, err = services.ValidateCaptchaKey(userSettings.EZCaptchaAPIKey, "ezcaptcha")
+			providerName = "EZCaptcha"
+		}
+	case "2captcha":
+		if userSettings.TwoCaptchaAPIKey != "" {
+			_, balance, err = services.ValidateCaptchaKey(userSettings.TwoCaptchaAPIKey, "2captcha")
+			providerName = "2Captcha"
+		}
+	}
+
+	if err != nil {
+		logger.Log.WithError(err).Error("Error validating user captcha key")
+		return "\n\nError retrieving balance information."
 	}
 
 	var threshold float64
@@ -182,7 +204,7 @@ func getBalanceInfo(userID string) string {
 	}
 
 	balanceMsg := fmt.Sprintf("\n\nYour current %s balance: %.2f points",
-		userSettings.PreferredCaptchaProvider, balance)
+		providerName, balance)
 
 	if balance < threshold {
 		balanceMsg += fmt.Sprintf(" (Warning: Below recommended %.2f points)", threshold)

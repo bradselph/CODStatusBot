@@ -159,15 +159,9 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	title := utils.SanitizeInput(strings.TrimSpace(data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value))
 	ssoCookie := strings.TrimSpace(data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value)
 
-	logger.Log.Infof("Attempting to add account. Title: %s, SSO Cookie length: %d", title, len(ssoCookie))
+	logger.Log.Infof("Processing account addition - Title: %s, Cookie length: %d", title, len(ssoCookie))
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
-	if err != nil {
+	if err := services.DeferWithPreference(s, i, false); err != nil {
 		logger.Log.WithError(err).Error("Error sending deferred response")
 		return
 	}
@@ -187,7 +181,7 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	channelID := getChannelID(s, i)
 	if channelID == "" {
-		sendFollowupMessage(s, i, "An error occurred while processing your request.")
+		sendFollowupMessage(s, i, "An error occurred while determining notification channel.")
 		return
 	}
 
@@ -301,6 +295,12 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			return
 		}
 
+		userSettings, err := services.GetUserSettings(userID)
+		if err != nil {
+			logger.Log.WithError(err).Error("Error getting user settings for initial check")
+			return
+		}
+
 		var updatedAccount models.Account
 		if err := database.DB.First(&updatedAccount, account.ID).Error; err != nil {
 			logger.Log.WithError(err).Error("Error fetching account for initial status update")
@@ -312,21 +312,14 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func sendFollowupMessage(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: content,
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, content, nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}
 }
 
 func sendFollowupMessageWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, content string, embed *discordgo.MessageEmbed) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: content,
-		Embeds:  []*discordgo.MessageEmbed{embed},
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, content, []*discordgo.MessageEmbed{embed}, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message with embed")
 	}
@@ -350,7 +343,7 @@ func getUserID(i *discordgo.InteractionCreate) string {
 }
 
 func getChannelID(s *discordgo.Session, i *discordgo.InteractionCreate) string {
-	userID := getUserID(i)
+	userID, _ := services.GetUserID(i)
 	if userID == "" {
 		return ""
 	}
@@ -390,13 +383,7 @@ func checkRateLimit(userID string) bool {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: message,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, message, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}

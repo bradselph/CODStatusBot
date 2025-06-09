@@ -263,18 +263,13 @@ func CommandVerdansk(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		})
 	}
 
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "How would you like to check Verdansk Replay stats?",
-			Flags:   discordgo.MessageFlagsEphemeral,
-			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{
-					Components: components,
-				},
-			},
+	verdanskComponents := []discordgo.MessageComponent{
+		discordgo.ActionsRow{
+			Components: components,
 		},
-	})
+	}
+
+	err = services.RespondWithPreferenceAndComponents(s, i, "How would you like to check Verdansk Replay stats?", nil, verdanskComponents, false)
 	if err != nil {
 		log.WithError(err).Error("Error responding with method selection")
 	} else {
@@ -411,14 +406,7 @@ func showAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 	log.WithField("ogVerdanskAccounts", ogVerdanskAccounts).Info("Displaying account selection buttons")
 
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Content:    "Select an account to check Verdansk Replay stats:\n(Green buttons indicate accounts with confirmed Verdansk stats)",
-			Flags:      discordgo.MessageFlagsEphemeral,
-			Components: components,
-		},
-	})
+	err = services.UpdateMessageWithPreference(s, i, "Select an account to check Verdansk Replay stats:\n(Green buttons indicate accounts with confirmed Verdansk stats)", nil, components)
 	if err != nil {
 		log.WithError(err).Error("Error responding with account selection")
 	} else {
@@ -456,12 +444,7 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 
 	log.WithField("accountTitle", account.Title).Info("Account found, deferring response")
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.DeferWithPreference(s, i, false)
 	if err != nil {
 		log.WithError(err).Error("Error sending deferred response")
 		return
@@ -511,12 +494,7 @@ func HandleActivisionIDModal(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 
 	log.Info("Deferring response")
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.DeferWithPreference(s, i, false)
 	if err != nil {
 		log.WithError(err).Error("Error sending deferred response")
 		return
@@ -1465,23 +1443,14 @@ func formatStatName(name string) string {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: message,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, message, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}
 }
 
 func sendFollowupMessage(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: message,
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, message, nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}

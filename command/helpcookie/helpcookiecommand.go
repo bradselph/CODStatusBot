@@ -2,6 +2,7 @@ package helpcookie
 
 import (
 	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/services"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -41,13 +42,7 @@ func CommandHelpCookie(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"  - Log in to Activision.\n" +
 		"  - Use the extension to find and copy the \"ACT_SSO_COOKIE\" value."
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: helpcookieGuide,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, helpcookieGuide, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to help cookie command")
 	}

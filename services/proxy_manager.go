@@ -17,15 +17,15 @@ import (
 
 type ProxyManager struct {
 	sync.RWMutex
-	Proxies            []string        // List of available proxies in format http://user:pass@host:port
-	ActiveProxies      map[string]bool // Map of active proxies
-	ProxyFailures      map[string]int  // Count of consecutive failures per proxy
+	Proxies            []string
+	ActiveProxies      map[string]bool
+	ProxyFailures      map[string]int
 	ProxyLastUsed      map[string]time.Time
 	ProxyRateLimits    map[string]time.Time
 	DefaultClient      *http.Client
 	ProxyClients       map[string]*http.Client
 	ProxyEnabled       bool
-	RotationStrategy   string // "round-robin", "random", "least-used"
+	RotationStrategy   string
 	CurrentProxyIndex  int
 	MaxFailures        int
 	CooldownPeriod     time.Duration
@@ -139,6 +139,11 @@ func LoadProxyConfiguration(pm *ProxyManager) {
 }
 
 func (pm *ProxyManager) initializeProxyStats() {
+	if database.DB == nil {
+		logger.Log.Debug("Database not yet initialized, skipping proxy stats initialization")
+		return
+	}
+
 	for proxy := range pm.ActiveProxies {
 		maskedProxy := maskProxyUrl(proxy)
 
@@ -272,7 +277,6 @@ func (pm *ProxyManager) MarkProxySuccess(proxyURL string) {
 	pm.Lock()
 	defer pm.Unlock()
 
-	// Reset failure count
 	pm.ProxyFailures[proxyURL] = 0
 
 	go pm.updateProxyStats(proxyURL, true, "")
@@ -314,6 +318,11 @@ func (pm *ProxyManager) MarkProxyRateLimited(proxyURL string, duration time.Dura
 }
 
 func (pm *ProxyManager) updateProxyStats(proxyURL string, success bool, errorReason string) {
+	if database.DB == nil {
+		logger.Log.Debug("Database not yet initialized, skipping proxy stats update")
+		return
+	}
+
 	maskedProxy := maskProxyUrl(proxyURL)
 
 	var proxyStats models.ProxyStats
@@ -368,6 +377,10 @@ func (pm *ProxyManager) RefreshProxies() {
 			logger.Log.Infof("Reactivated proxy %s after cooldown period", maskProxyUrl(proxy))
 
 			go func(p string) {
+				if database.DB == nil {
+					logger.Log.Debug("Database not yet initialized, skipping proxy reactivation update")
+					return
+				}
 				maskedProxy := maskProxyUrl(p)
 				if err := database.DB.Model(&models.ProxyStats{}).
 					Where("proxy_url = ?", maskedProxy).
@@ -480,6 +493,11 @@ func (t *customHeaderTransport) RoundTrip(req *http.Request) (*http.Response, er
 	}
 
 	return t.base.RoundTrip(req)
+}
+
+func InitializeProxyStatsAfterDB() {
+	pm := GetProxyManager()
+	pm.initializeProxyStats()
 }
 
 func GetSharedClient() *http.Client {

@@ -106,3 +106,7 @@ func GetLongTimeoutHTTPClient() *http.Client {
 	defer clientMutex.RUnlock()
 	return longTimeoutClient
 }
+
+func GetHTTPClient() *http.Client {
+	return GetDefaultHTTPClient()
+}

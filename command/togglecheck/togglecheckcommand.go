@@ -34,49 +34,22 @@ func CommandToggleCheck(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	var (
-		components []discordgo.MessageComponent
-		currentRow []discordgo.MessageComponent
-	)
+	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
 		label := fmt.Sprintf("%s (%s)", account.Title, services.GetCheckStatus(account.IsCheckDisabled))
-		currentRow = append(currentRow, discordgo.Button{
-			Label:    label,
-			Style:    discordgo.PrimaryButton,
-			CustomID: fmt.Sprintf("toggle_check_%d", account.ID),
-		})
-
-		if len(currentRow) == 5 {
-			components = append(components, discordgo.ActionsRow{Components: currentRow})
-			currentRow = []discordgo.MessageComponent{}
-		}
+		button := services.CreateV2Button(label, fmt.Sprintf("toggle_check_%d", account.ID), discordgo.PrimaryButton)
+		components = append(components, button)
 	}
 
-	if len(currentRow) > 0 {
-		components = append(components, discordgo.ActionsRow{Components: currentRow})
-	}
-
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content:    "Select an account to toggle auto check On/Off:",
-			Flags:      discordgo.MessageFlagsEphemeral,
-			Components: components,
-		},
-	})
+	err = services.RespondWithPreferenceAndComponents(s, i, "Select an account to toggle auto check On/Off:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with account selection")
 	}
 }
 
 func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.DeferWithPreference(s, i, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error acknowledging interaction")
 		return
@@ -129,26 +102,12 @@ func HandleAccountSelection(s *discordgo.Session, i *discordgo.InteractionCreate
 func showConfirmationButtons(s *discordgo.Session, i *discordgo.InteractionCreate, accountID uint, message string) {
 	logger.Log.Infof("Showing confirmation buttons for account %d", accountID)
 
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: message,
-		Flags:   discordgo.MessageFlagsEphemeral,
-		Components: []discordgo.MessageComponent{
-			discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{
-					discordgo.Button{
-						Label:    "Confirm Re-enable",
-						Style:    discordgo.SuccessButton,
-						CustomID: fmt.Sprintf("confirm_reenable_%d", accountID),
-					},
-					discordgo.Button{
-						Label:    "Cancel",
-						Style:    discordgo.DangerButton,
-						CustomID: "cancel_reenable",
-					},
-				},
-			},
-		},
-	})
+	confirmComponents := []discordgo.MessageComponent{
+		services.CreateV2Button("Confirm Re-enable", fmt.Sprintf("confirm_reenable_%d", accountID), discordgo.SuccessButton),
+		services.CreateV2Button("Cancel", "cancel_reenable", discordgo.DangerButton),
+	}
+
+	_, err := services.FollowupWithPreference(s, i, message, nil, confirmComponents, false)
 
 	if err != nil {
 		logger.Log.WithError(err).Error("Error showing confirmation buttons")
@@ -158,22 +117,14 @@ func showConfirmationButtons(s *discordgo.Session, i *discordgo.InteractionCreat
 }
 
 func sendFollowupMessage(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	_, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: message,
-		Flags:   discordgo.MessageFlagsEphemeral,
-	})
+	_, err := services.FollowupWithPreference(s, i, message, nil, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup message")
 	}
 }
 
 func HandleConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.DeferWithPreference(s, i, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to defer interaction response")
 		return
@@ -240,13 +191,7 @@ func HandleConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Content:    message,
-			Components: []discordgo.MessageComponent{},
-		},
-	})
+	err := services.UpdateMessageWithPreference(s, i, message, nil, []discordgo.MessageComponent{})
 
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")

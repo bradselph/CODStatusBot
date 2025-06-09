@@ -9,6 +9,7 @@ import (
 
 	"github.com/bradselph/CODStatusBot/configuration"
 	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/services"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -50,29 +51,20 @@ func CommandFeedback(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	logger.Log.WithField("userID", userID).Info("Stored feedback message")
 
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Do you want to send this feedback anonymously?",
-			Flags:   discordgo.MessageFlagsEphemeral,
-			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{
-					Components: []discordgo.MessageComponent{
-						discordgo.Button{
-							Label:    "Send Anonymously",
-							Style:    discordgo.PrimaryButton,
-							CustomID: fmt.Sprintf("feedback_anonymous_%s", userID),
-						},
-						discordgo.Button{
-							Label:    "Send with ID",
-							Style:    discordgo.SecondaryButton,
-							CustomID: fmt.Sprintf("feedback_with_id_%s", userID),
-						},
-					},
-				},
-			},
+	feedbackComponents := []discordgo.MessageComponent{
+		discordgo.Button{
+			Label:    "Send Anonymously",
+			Style:    discordgo.PrimaryButton,
+			CustomID: fmt.Sprintf("feedback_anonymous_%s", userID),
 		},
-	})
+		discordgo.Button{
+			Label:    "Send with ID",
+			Style:    discordgo.SecondaryButton,
+			CustomID: fmt.Sprintf("feedback_with_id_%s", userID),
+		},
+	}
+
+	err = services.RespondWithPreferenceAndComponents(s, i, "Do you want to send this feedback anonymously?", nil, feedbackComponents, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to send anonymity choice message")
 		sendResponse(s, i, "There was an error processing your feedback. Please try again later.", true)
@@ -147,18 +139,7 @@ func sendFeedbackToDeveloper(s *discordgo.Session, feedback string) error {
 }
 
 func sendResponse(s *discordgo.Session, i *discordgo.InteractionCreate, content string, ephemeral bool) {
-	flags := discordgo.MessageFlags(0)
-	if ephemeral {
-		flags = discordgo.MessageFlagsEphemeral
-	}
-
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
-			Flags:   flags,
-		},
-	})
+	err := services.UpdateMessageWithPreference(s, i, content, nil, []discordgo.MessageComponent{})
 	if err != nil {
 		logger.Log.WithError(err).Error("Failed to send interaction response")
 	}

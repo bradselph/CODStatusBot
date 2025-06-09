@@ -36,27 +36,16 @@ func CommandSetCaptchaService(s *discordgo.Session, i *discordgo.InteractionCrea
 		components = append(components, createProviderButton("2captcha"))
 	}
 
-	components = append(components, discordgo.Button{
-		Label:    "Remove API Key",
-		Style:    discordgo.DangerButton,
-		CustomID: "set_captcha_remove",
-	})
+	components = append(components, services.CreateLegacyButton("Remove API Key", "set_captcha_remove", discordgo.DangerButton))
+
+	components = append(components, services.CreateLegacyButton("Fallback Settings", "set_captcha_fallback", discordgo.SecondaryButton))
 
 	if len(components) == 1 {
 		respondToInteraction(s, i, "No captcha services are currently enabled. Please contact the bot administrator.")
 		return
 	}
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Select a captcha service provider:",
-			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{Components: components},
-			},
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreferenceAndComponents(s, i, "Select a captcha service provider:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding with service selection")
 	}
@@ -67,6 +56,11 @@ func HandleCaptchaServiceSelection(s *discordgo.Session, i *discordgo.Interactio
 
 	if customID == "set_captcha_remove" {
 		handleAPIKeyRemoval(s, i)
+		return
+	}
+
+	if customID == "set_captcha_fallback" {
+		showFallbackSettings(s, i)
 		return
 	}
 
@@ -96,12 +90,8 @@ func HandleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 }
 
-func createProviderButton(provider string) discordgo.Button {
-	return discordgo.Button{
-		Label:    providerLabels[provider],
-		Style:    discordgo.PrimaryButton,
-		CustomID: fmt.Sprintf("set_captcha_%s", provider),
-	}
+func createProviderButton(provider string) discordgo.MessageComponent {
+	return services.CreateLegacyButton(providerLabels[provider], fmt.Sprintf("set_captcha_%s", provider), discordgo.PrimaryButton)
 }
 
 func handleAPIKeyRemoval(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -176,6 +166,9 @@ func validateAndSaveAPIKey(s *discordgo.Session, i *discordgo.InteractionCreate,
 
 	cfg := configuration.Get()
 	settings.PreferredCaptchaProvider = provider
+	if settings.FallbackCaptchaProvider == "" || settings.FallbackCaptchaProvider == provider {
+		settings.FallbackCaptchaProvider = services.GetFallbackProvider(provider)
+	}
 	settings.CheckInterval = cfg.Intervals.Check
 	settings.NotificationInterval = cfg.Intervals.Notification
 	settings.CustomSettings = true
@@ -252,35 +245,205 @@ func updateAPIKeys(settings *models.UserSettings, provider, apiKey string) {
 }
 
 func respondToInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, message string) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: message,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
+	err := services.RespondWithPreference(s, i, message, nil, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction")
 	}
 }
 
 func respondToInteractionWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, message string, embed *discordgo.MessageEmbed) {
-	response := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags: discordgo.MessageFlagsEphemeral,
-		},
-	}
-
-	if message != "" {
-		response.Data.Content = message
-	}
+	embeds := []*discordgo.MessageEmbed{}
 	if embed != nil {
-		response.Data.Embeds = []*discordgo.MessageEmbed{embed}
+		embeds = []*discordgo.MessageEmbed{embed}
 	}
 
-	err := s.InteractionRespond(i.Interaction, response)
+	err := services.RespondWithPreference(s, i, message, embeds, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error responding to interaction with embed")
 	}
+}
+
+func showFallbackSettings(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	userID, err := services.GetUserID(i)
+	if err != nil {
+		respondToInteraction(s, i, "An error occurred while processing your request.")
+		return
+	}
+
+	settings, err := services.GetUserSettings(userID)
+	if err != nil {
+		respondToInteraction(s, i, "Failed to get your current settings.")
+		return
+	}
+
+	var components []discordgo.MessageComponent
+
+	currentFallback := "Auto (" + services.GetFallbackProvider(settings.PreferredCaptchaProvider) + ")"
+	if settings.FallbackCaptchaProvider != "" {
+		currentFallback = providerLabels[settings.FallbackCaptchaProvider]
+	}
+
+	fallbackStatus := "Disabled"
+	if settings.EnableFallback {
+		fallbackStatus = "Enabled"
+	}
+
+	enabledLabel := "Enable Fallback"
+	enabledStyle := discordgo.PrimaryButton
+	if settings.EnableFallback {
+		enabledLabel = "Disable Fallback"
+		enabledStyle = discordgo.SecondaryButton
+	}
+
+	components = append(components, services.CreateLegacyButton(enabledLabel, "toggle_fallback_enabled", enabledStyle))
+
+	cfg := configuration.Get()
+	if cfg.CaptchaService.Capsolver.Enabled && settings.PreferredCaptchaProvider != "capsolver" {
+		components = append(components, services.CreateLegacyButton("Set Capsolver as Fallback", "set_fallback_capsolver", discordgo.SecondaryButton))
+	}
+
+	if cfg.CaptchaService.EZCaptcha.Enabled && settings.PreferredCaptchaProvider != "ezcaptcha" {
+		components = append(components, services.CreateLegacyButton("Set EZCaptcha as Fallback", "set_fallback_ezcaptcha", discordgo.SecondaryButton))
+	}
+
+	if cfg.CaptchaService.TwoCaptcha.Enabled && settings.PreferredCaptchaProvider != "2captcha" {
+		components = append(components, services.CreateLegacyButton("Set 2Captcha as Fallback", "set_fallback_2captcha", discordgo.SecondaryButton))
+	}
+
+	components = append(components, services.CreateLegacyButton("Back to Main Menu", "captcha_main_menu", discordgo.SecondaryButton))
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "🔄 Fallback Captcha Settings",
+		Description: "Configure automatic fallback when your primary captcha service fails.",
+		Color:       0x00D4AA,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "📊 Current Configuration",
+				Value:  fmt.Sprintf("**Primary:** %s\n**Fallback:** %s\n**Status:** %s", providerLabels[settings.PreferredCaptchaProvider], currentFallback, fallbackStatus),
+				Inline: false,
+			},
+			{
+				Name:   "💡 How It Works",
+				Value:  "When your primary service fails, the bot automatically tries the fallback service. This improves reliability and reduces failed checks.",
+				Inline: false,
+			},
+			{
+				Name:   "⚙️ Benefits",
+				Value:  "• Higher success rate\n• Automatic failover\n• No manual intervention needed\n• Better uptime for checks",
+				Inline: false,
+			},
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "Components v2 • No ActionRow limits",
+		},
+	}
+
+	err = services.UpdateMessageWithPreference(s, i, "", []*discordgo.MessageEmbed{embed}, components)
+	if err != nil {
+		logger.Log.WithError(err).Error("Error updating message with fallback settings")
+	}
+}
+
+func HandleFallbackSettingsInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	customID := i.MessageComponentData().CustomID
+	userID, err := services.GetUserID(i)
+	if err != nil {
+		respondToInteraction(s, i, "An error occurred while processing your request.")
+		return
+	}
+
+	switch customID {
+	case "toggle_fallback_enabled":
+		toggleFallbackEnabled(s, i, userID)
+	case "set_fallback_capsolver":
+		setFallbackProvider(s, i, userID, "capsolver")
+	case "set_fallback_ezcaptcha":
+		setFallbackProvider(s, i, userID, "ezcaptcha")
+	case "set_fallback_2captcha":
+		setFallbackProvider(s, i, userID, "2captcha")
+	case "captcha_main_menu":
+		CommandSetCaptchaService(s, i)
+	default:
+		respondToInteraction(s, i, "Unknown fallback setting.")
+	}
+}
+
+func toggleFallbackEnabled(s *discordgo.Session, i *discordgo.InteractionCreate, userID string) {
+	settings, err := services.GetUserSettings(userID)
+	if err != nil {
+		respondToInteraction(s, i, "Failed to get your current settings.")
+		return
+	}
+
+	settings.EnableFallback = !settings.EnableFallback
+
+	if err := database.DB.Save(&settings).Error; err != nil {
+		respondToInteraction(s, i, "Failed to update your settings.")
+		return
+	}
+
+	status := "disabled"
+	if settings.EnableFallback {
+		status = "enabled"
+	}
+
+	respondToInteraction(s, i, fmt.Sprintf("Fallback captcha has been %s.", status))
+}
+
+func setFallbackProvider(s *discordgo.Session, i *discordgo.InteractionCreate, userID, provider string) {
+	settings, err := services.GetUserSettings(userID)
+	if err != nil {
+		respondToInteraction(s, i, "Failed to get your current settings.")
+		return
+	}
+
+	if settings.PreferredCaptchaProvider == provider {
+		respondToInteraction(s, i, "You cannot set the same provider as both primary and fallback.")
+		return
+	}
+
+	settings.FallbackCaptchaProvider = provider
+
+	if err := database.DB.Save(&settings).Error; err != nil {
+		respondToInteraction(s, i, "Failed to update your settings.")
+		return
+	}
+
+	respondToInteraction(s, i, fmt.Sprintf("Fallback provider set to %s.", providerLabels[provider]))
+}
+
+func HandleFallbackNoticeInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	customID := i.MessageComponentData().CustomID
+	userID, err := services.GetUserID(i)
+	if err != nil {
+		respondToInteraction(s, i, "An error occurred while processing your request.")
+		return
+	}
+
+	switch customID {
+	case "dismiss_fallback_notice":
+		dismissFallbackNotice(s, i, userID)
+	case "set_captcha_from_notice":
+		CommandSetCaptchaService(s, i)
+	default:
+		respondToInteraction(s, i, "Unknown action.")
+	}
+}
+
+func dismissFallbackNotice(s *discordgo.Session, i *discordgo.InteractionCreate, userID string) {
+	settings, err := services.GetUserSettings(userID)
+	if err != nil {
+		respondToInteraction(s, i, "Failed to get your current settings.")
+		return
+	}
+
+	settings.HasSeenFallbackNotice = true
+
+	if err := database.DB.Save(&settings).Error; err != nil {
+		respondToInteraction(s, i, "Failed to update your settings.")
+		return
+	}
+
+	respondToInteraction(s, i, "You will no longer receive fallback service notifications. You can still configure fallback settings using /setcaptchaservice.")
 }

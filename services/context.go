@@ -23,16 +23,6 @@ func GetInstallContext(i *discordgo.InteractionCreate) InstallContext {
 	return DirectContext
 }
 
-func GetUserID(i *discordgo.InteractionCreate) (string, error) {
-	if i.Member != nil && i.Member.User != nil {
-		return i.Member.User.ID, nil
-	}
-	if i.User != nil {
-		return i.User.ID, nil
-	}
-	return "", fmt.Errorf("unable to determine user ID")
-}
-
 func GetResponseChannel(s *discordgo.Session, userID string, i *discordgo.InteractionCreate) (string, error) {
 	var userSettings models.UserSettings
 	result := database.DB.Where("user_id = ?", userID).First(&userSettings)

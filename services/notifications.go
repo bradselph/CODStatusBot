@@ -15,20 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func formatVIPStatus(isVIP bool) string {
-	if isVIP {
-		return "Yes"
-	}
-	return "No"
-}
-
-func formatCheckStatus(isDisabled bool) string {
-	if isDisabled {
-		return "DISABLED"
-	}
-	return "ENABLED"
-}
-
 func getNotificationType(status models.Status) string {
 	switch status {
 	case models.StatusPermaban:
@@ -114,13 +100,18 @@ func NotifyAdmin(s *discordgo.Session, message string) {
 	cfg := configuration.Get()
 	adminID := cfg.Discord.DeveloperID
 	if adminID == "" {
-		logger.Log.Error("Developer ID not configured")
+		logger.Log.Error("Developer ID not configured - cannot send admin notifications")
+		return
+	}
+
+	if len(adminID) < 17 || len(adminID) > 19 {
+		logger.Log.Errorf("Invalid Developer ID format: %s (should be 17-19 digit Discord snowflake)", adminID)
 		return
 	}
 
 	channel, err := s.UserChannelCreate(adminID)
 	if err != nil {
-		logger.Log.WithError(err).Error("Failed to create DM channel with admin")
+		logger.Log.WithError(err).Errorf("Failed to create DM channel with admin %s", adminID)
 		return
 	}
 
@@ -145,7 +136,7 @@ func GetCooldownDuration(userSettings models.UserSettings, notificationType stri
 	case "daily_update":
 		return time.Duration(cfg.Intervals.Notification) * time.Hour
 	case "invalid_cookie", "cookie_expiring_soon":
-		return time.Duration(cfg.Intervals.CookieExpiration) * time.Hour
+		return time.Duration(cfg.ErrorHandling.CookieExpirationWarningHours) * time.Hour
 	default:
 		if config, exists := notificationConfigs[notificationType]; exists {
 			return config.Cooldown
@@ -155,32 +146,31 @@ func GetCooldownDuration(userSettings models.UserSettings, notificationType stri
 }
 
 func GetNotificationChannel(s *discordgo.Session, account models.Account, userSettings models.UserSettings) (string, error) {
+	if account.UserID == "" {
+		logger.Log.Errorf("Account %s (ID: %d) has empty UserID - cannot create notification channel", account.Title, account.ID)
+		return "", fmt.Errorf("account has empty userID - cannot create notification channel")
+	}
+
 	if userSettings.NotificationType == "dm" {
+		if len(account.UserID) < 17 || len(account.UserID) > 19 {
+			logger.Log.Errorf("Invalid UserID format for account %s (ID: %d): %s (should be 17-19 digit Discord snowflake)", account.Title, account.ID, account.UserID)
+			return "", fmt.Errorf("invalid userID format: %s (should be 17-19 digit Discord snowflake)", account.UserID)
+		}
+
 		channel, err := s.UserChannelCreate(account.UserID)
 		if err != nil {
-			return "", fmt.Errorf("failed to create DM channel: %w", err)
+			logger.Log.WithError(err).Errorf("Failed to create DM channel for user %s (Account: %s, ID: %d)", account.UserID, account.Title, account.ID)
+			return "", fmt.Errorf("failed to create DM channel for user %s: %w", account.UserID, err)
 		}
 		return channel.ID, nil
 	}
 
 	if account.ChannelID == "" {
+		logger.Log.Errorf("Account %s (ID: %d) has no channel ID set", account.Title, account.ID)
 		return "", fmt.Errorf("no channel ID set for account")
 	}
 
 	return account.ChannelID, nil
-}
-
-func FormatDuration(d time.Duration) string {
-	days := int(d.Hours() / 24)
-	hours := int(d.Hours()) % 24
-	minutes := int(d.Minutes()) % 60
-
-	if days > 0 {
-		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
-	} else if hours > 0 {
-		return fmt.Sprintf("%dh %dm", hours, minutes)
-	}
-	return fmt.Sprintf("%dm", minutes)
 }
 
 func CheckAndNotifyBalance(s *discordgo.Session, userID string, balance float64) {
@@ -389,8 +379,18 @@ func DisableUserCaptcha(s *discordgo.Session, userID string, reason string) erro
 
 	settings.EZCaptchaAPIKey = ""
 	settings.CustomSettings = false
-	settings.CheckInterval = defaultSettings.CheckInterval
-	settings.NotificationInterval = defaultSettings.NotificationInterval
+	//settings.CheckInterval = defaultSettings.CheckInterval
+	//settings.NotificationInterval = defaultSettings.NotificationInterval
+
+	defaults, err := GetDefaultSettings()
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to get default settings, using hardcoded values")
+		settings.CheckInterval = 30
+		settings.NotificationInterval = 24
+	} else {
+		settings.CheckInterval = defaults.CheckInterval
+		settings.NotificationInterval = defaults.NotificationInterval
+	}
 
 	if err := database.DB.Save(&settings).Error; err != nil {
 		return err
@@ -495,6 +495,11 @@ func (nl *NotificationLimiter) CanSendNotification(userID string, notificationTy
 }
 
 func SendNotification(s *discordgo.Session, account models.Account, embed *discordgo.MessageEmbed, content, notificationType string) error {
+	if account.UserID == "" {
+		logger.Log.Errorf("Cannot send notification for account %s (ID: %d) - empty UserID", account.Title, account.ID)
+		return fmt.Errorf("cannot send notification - account has empty UserID")
+	}
+
 	if !globalLimiter.CanSendNotification(account.UserID, notificationType) {
 		storeSuppressedNotification(account.UserID, notificationType, embed, content)
 		logger.Log.WithFields(logrus.Fields{
@@ -548,6 +553,134 @@ func SendNotification(s *discordgo.Session, account models.Account, embed *disco
 		Embed:   embed,
 		Content: content,
 	})
+
+	success := err == nil
+	LogNotification(account.UserID, account.ID, notificationType, success)
+
+	if err != nil {
+		TrackMessageFailure(account.UserID, err.Error())
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+
+	userSettings.LastCommandTimes[notificationType] = now
+	if err := database.DB.Save(&userSettings).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to update notification timestamp")
+	}
+
+	account.LastNotification = now.Unix()
+	if err := database.DB.Save(&account).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to update account last notification")
+	}
+
+	return nil
+}
+
+func SendNotificationWithComponentsV2(s *discordgo.Session, account models.Account, embed *discordgo.MessageEmbed, content, notificationType string, components []discordgo.MessageComponent) error {
+	if account.UserID == "" {
+		logger.Log.Errorf("Cannot send notification for account %s (ID: %d) - empty UserID", account.Title, account.ID)
+		return fmt.Errorf("cannot send notification - account has empty UserID")
+	}
+
+	if !globalLimiter.CanSendNotification(account.UserID, notificationType) {
+		storeSuppressedNotification(account.UserID, notificationType, embed, content)
+		logger.Log.WithFields(logrus.Fields{
+			"userID":           account.UserID,
+			"accountTitle":     account.Title,
+			"notificationType": notificationType,
+		}).Debug("Notification suppressed due to rate limiting")
+		return nil
+	}
+
+	userSettings, err := GetUserSettings(account.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get user settings: %w", err)
+	}
+
+	if userSettings.IsUnreachable {
+		cfg := configuration.Get()
+		if time.Since(userSettings.UnreachableSince) < cfg.Users.UnreachableResetPeriod {
+			logger.Log.Debugf("Skipping notification to unreachable user %s", account.UserID)
+			return nil
+		}
+		userSettings.IsUnreachable = false
+		userSettings.MessageFailures = 0
+		if err := database.DB.Save(&userSettings).Error; err != nil {
+			logger.Log.WithError(err).Error("Error resetting user reachability status")
+		}
+	}
+
+	now := time.Now()
+	lastNotification := userSettings.LastCommandTimes[notificationType]
+	cooldownDuration := GetCooldownDuration(userSettings, notificationType, getDefaultCooldown())
+	if !lastNotification.IsZero() && now.Sub(lastNotification) < cooldownDuration {
+		logger.Log.Infof("Skipping %s notification for user %s (cooldown)", notificationType, account.UserID)
+		return nil
+	}
+
+	channelID, err := GetNotificationChannel(s, account, userSettings)
+	if err != nil {
+		if userSettings.NotificationType == "dm" {
+			channel, dmErr := s.UserChannelCreate(account.UserID)
+			if dmErr != nil {
+				return fmt.Errorf("failed to create DM channel: %w", dmErr)
+			}
+			channelID = channel.ID
+		} else {
+			return fmt.Errorf("failed to get notification channel: %w", err)
+		}
+	}
+
+	cfg := configuration.Get()
+	var message *discordgo.MessageSend
+
+	if cfg.ComponentsV2.Enabled && len(components) > 0 {
+		message = &discordgo.MessageSend{
+			Components: components,
+			Flags:      discordgo.MessageFlagsIsComponentsV2,
+		}
+
+		_, err = s.ChannelMessageSendComplex(channelID, message)
+		if err == nil {
+			success := true
+			LogNotification(account.UserID, account.ID, notificationType, success)
+
+			userSettings.LastCommandTimes[notificationType] = now
+			if err := database.DB.Save(&userSettings).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to update notification timestamp")
+			}
+
+			account.LastNotification = now.Unix()
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to update account last notification")
+			}
+
+			return nil
+		}
+
+		logger.Log.WithError(err).Warn("Components v2 failed, falling back to legacy components")
+	}
+
+	var wrappedComponents []discordgo.MessageComponent
+	if len(components) > 0 {
+		for i := 0; i < len(components); i += 5 {
+			end := i + 5
+			if end > len(components) {
+				end = len(components)
+			}
+			row := discordgo.ActionsRow{
+				Components: components[i:end],
+			}
+			wrappedComponents = append(wrappedComponents, row)
+		}
+	}
+
+	message = &discordgo.MessageSend{
+		Embed:      embed,
+		Content:    content,
+		Components: wrappedComponents,
+	}
+
+	_, err = s.ChannelMessageSendComplex(channelID, message)
 
 	success := err == nil
 	LogNotification(account.UserID, account.ID, notificationType, success)
@@ -651,16 +784,47 @@ func SendGlobalAnnouncement(s *discordgo.Session, userID string) error {
 }
 
 func SendAnnouncementToAllUsers(s *discordgo.Session) error {
+	cfg := configuration.Get()
 	var users []models.UserSettings
-	if err := database.DB.Find(&users).Error; err != nil {
-		logger.Log.WithError(err).Error("Error fetching all users")
-		return err
+	if err := database.DB.Where("has_seen_announcement = ?", false).Find(&users).Error; err != nil {
+		return fmt.Errorf("failed to get users for announcement: %w", err)
 	}
 
+	if len(users) == 0 {
+		return nil
+	}
+
+	embed := CreateAnnouncementEmbed()
+	sentCount := 0
+
 	for _, user := range users {
-		if err := SendGlobalAnnouncement(s, user.UserID); err != nil {
-			logger.Log.WithError(err).Errorf("Failed to send announcement to user %s", user.UserID)
+		if time.Since(user.LastDailyUpdateNotification) < time.Duration(cfg.Intervals.GlobalNotification)*time.Hour {
+			continue
 		}
+
+		channel, err := s.UserChannelCreate(user.UserID)
+		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to create DM channel for user %s", user.UserID)
+			continue
+		}
+
+		if _, err := s.ChannelMessageSendEmbed(channel.ID, embed); err != nil {
+			logger.Log.WithError(err).Errorf("Failed to send announcement to user %s", user.UserID)
+			continue
+		}
+
+		user.HasSeenAnnouncement = true
+		user.LastDailyUpdateNotification = time.Now()
+		if err := database.DB.Save(&user).Error; err != nil {
+			logger.Log.WithError(err).Errorf("Failed to update announcement status for user %s", user.UserID)
+		}
+
+		sentCount++
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if sentCount > 0 {
+		logger.Log.Infof("Sent global announcement to %d users", sentCount)
 	}
 
 	return nil
@@ -767,6 +931,7 @@ func SendConsolidatedDailyUpdate(s *discordgo.Session, userID string, userSettin
 		}
 
 		if description.Len() > 0 {
+			//goland:noinspection GoDeprecation
 			embedFields = append(embedFields, &discordgo.MessageEmbedField{
 				Name:   fmt.Sprintf("%s Accounts", strings.Title(string(status))),
 				Value:  description.String(),
@@ -821,7 +986,7 @@ func formatAccountStatus(account models.Account, status models.Status, timeUntil
 
 	switch status {
 	case models.StatusGood:
-		statusDesc.WriteString(fmt.Sprintf("Good standing | Expires in %s", FormatDuration(timeUntilExpiration)))
+		statusDesc.WriteString(fmt.Sprintf("Good standing | Expires in %s", FormatExpirationTime(account.SSOCookieExpiration)))
 	case models.StatusPermaban:
 		statusDesc.WriteString("Permanently banned")
 	case models.StatusShadowban:
@@ -858,12 +1023,12 @@ func checkAccountsNeedingAttention(s *discordgo.Session, accounts []models.Accou
 			timeUntilExpiration, err := CheckSSOCookieExpiration(account.SSOCookieExpiration)
 			if err != nil {
 				errorAccounts = append(errorAccounts, account)
-			} else if timeUntilExpiration <= time.Duration(cfg.Intervals.CookieExpiration)*time.Hour {
+			} else if timeUntilExpiration <= time.Duration(cfg.ErrorHandling.CookieExpirationWarningHours)*time.Hour {
 				expiringAccounts = append(expiringAccounts, account)
 			}
 		}
 
-		if account.ConsecutiveErrors >= cfg.CaptchaService.MaxRetries {
+		if account.ConsecutiveErrors >= cfg.ErrorHandling.MaxConsecutiveErrors {
 			errorAccounts = append(errorAccounts, account)
 		}
 	}
@@ -874,7 +1039,7 @@ func checkAccountsNeedingAttention(s *discordgo.Session, accounts []models.Accou
 		}
 	}
 
-	if len(errorAccounts) > 0 && time.Since(userSettings.LastErrorNotification) >= time.Hour*6 {
+	if len(errorAccounts) > 0 && time.Since(userSettings.LastErrorNotification) >= time.Duration(cfg.ErrorHandling.ErrorNotificationCooldownHours)*time.Hour {
 		notifyAccountErrors(s, errorAccounts, userSettings)
 	}
 }
@@ -897,7 +1062,7 @@ func notifyAccountErrors(s *discordgo.Session, errorAccounts []models.Account, u
 		var errorDescription string
 		if account.IsCheckDisabled {
 			errorDescription = fmt.Sprintf("Checks disabled - Reason: %s", account.DisabledReason)
-		} else if account.ConsecutiveErrors >= cfg.CaptchaService.MaxRetries {
+		} else if account.ConsecutiveErrors >= cfg.ErrorHandling.MaxConsecutiveErrors {
 			errorDescription = fmt.Sprintf("Multiple check failures - Last error time: %s",
 				account.LastErrorTime.Format("2006-01-02 15:04:05"))
 		} else {

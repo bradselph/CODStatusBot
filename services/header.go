@@ -2,12 +2,22 @@ package services
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
+
+	"github.com/bradselph/CODStatusBot/configuration"
 )
 
 func GenerateHeaders(ssoCookie string) map[string]string {
+	cfg := configuration.Get()
+
+	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+	if len(cfg.Proxy.UserAgents) > 0 {
+		userAgent = cfg.Proxy.UserAgents[rand.Intn(len(cfg.Proxy.UserAgents))]
+	}
+
 	headers := map[string]string{
-		"user-agent":         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+		"user-agent":         userAgent,
 		"accept":             "*/*",
 		"accept-language":    "en-US,en;q=0.9",
 		"cache-control":      "no-cache",

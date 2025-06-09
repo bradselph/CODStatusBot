@@ -17,11 +17,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const (
-	maxConsecutiveErrors    = 5
-	cookieExpirationWarning = 24
-)
-
 var (
 	DBMutex sync.Mutex
 )
@@ -30,7 +25,6 @@ func init() {}
 
 func InitializeServices() {
 	cfg := configuration.Get()
-	initDefaultSettings()
 	logger.Log.Infof("Loaded rate limits and intervals: CHECK_INTERVAL=%d, NOTIFICATION_INTERVAL=%.2f, "+
 		"COOLDOWN_DURATION=%.2f, SLEEP_DURATION=%d, COOKIE_CHECK_INTERVAL_PERMABAN=%.2f, "+
 		"STATUS_CHANGE_COOLDOWN=%.2f, GLOBAL_NOTIFICATION_COOLDOWN=%.2f, COOKIE_EXPIRATION_WARNING=%.2f, "+
@@ -50,6 +44,26 @@ func CheckAccounts(s *discordgo.Session) {
 		}
 	}
 
+	var totalAccounts int64
+	var disabledAccounts int64
+	var expiredCookieAccounts int64
+
+	if err := database.DB.Model(&models.Account{}).Count(&totalAccounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count total accounts")
+		return
+	}
+
+	if err := database.DB.Model(&models.Account{}).Where("is_check_disabled = ?", true).Count(&disabledAccounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count disabled accounts")
+	}
+
+	if err := database.DB.Model(&models.Account{}).Where("is_expired_cookie = ?", true).Count(&expiredCookieAccounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count expired cookie accounts")
+	}
+
+	logger.Log.Infof("Account status summary: Total: %d, Disabled: %d, Expired Cookies: %d, Eligible for check: %d",
+		totalAccounts, disabledAccounts, expiredCookieAccounts, totalAccounts-disabledAccounts-expiredCookieAccounts)
+
 	var accounts []models.Account
 	if err := database.DB.Where("is_check_disabled = ? AND is_expired_cookie = ?", false, false).Find(&accounts).Error; err != nil {
 		logger.Log.WithError(err).Error("Failed to fetch accounts from database")
@@ -58,11 +72,17 @@ func CheckAccounts(s *discordgo.Session) {
 
 	accountsByUser := make(map[string][]models.Account)
 	for _, account := range accounts {
+		if account.UserID == "" {
+			logger.Log.Warnf("Skipping account %s (ID: %d) with empty UserID", account.Title, account.ID)
+			continue
+		}
 		accountsByUser[account.UserID] = append(accountsByUser[account.UserID], account)
 	}
 
 	processedCount := 0
 	skippedCount := 0
+	successfulChecks := 0
+	failedChecks := 0
 	start := time.Now()
 
 	for userID, userAccounts := range accountsByUser {
@@ -70,19 +90,20 @@ func CheckAccounts(s *discordgo.Session) {
 			skippedCount++
 			continue
 		}
-		processUserAccounts(s, userID, userAccounts)
+		userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
+		successfulChecks += userSuccess
+		failedChecks += userFailed
 		processedCount++
 	}
 
 	duration := time.Since(start).Seconds()
-	logger.Log.Infof("Completed periodic account check: processed %d users, skipped %d users in %.2f seconds",
-		processedCount, skippedCount, duration)
+	logger.Log.Infof("Completed periodic account check: processed %d users, skipped %d users, successful checks: %d, failed checks: %d, in %.2f seconds",
+		processedCount, skippedCount, successfulChecks, failedChecks, duration)
 
 	if err := updateShardStats(shardMgr.InstanceID, processedCount, duration); err != nil {
 		logger.Log.WithError(err).Error("Failed to update shard stats")
 	}
 }
-
 func updateShardStats(instanceID string, processedUsers int, durationSec float64) error {
 	stats := map[string]interface{}{
 		"last_check_time": time.Now(),
@@ -166,6 +187,8 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 
 		if err := database.DB.Create(&statusLog).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to create status log")
+		} else {
+			logger.Log.Infof("Created status change log for account %s: %s -> %s", account.Title, previousStatus, newStatus)
 		}
 
 		ban := models.Ban{
@@ -692,9 +715,20 @@ func ScheduleTempBanNotification(s *discordgo.Session, account models.Account, d
 }
 
 func getChannelForAnnouncement(s *discordgo.Session, userID string, userSettings models.UserSettings) (string, error) {
+	if userID == "" {
+		logger.Log.Error("Cannot get announcement channel - empty UserID")
+		return "", fmt.Errorf("cannot get announcement channel - empty UserID")
+	}
+
 	if userSettings.NotificationType == "dm" {
+		if len(userID) < 17 || len(userID) > 19 {
+			logger.Log.Errorf("Invalid UserID format for announcement: %s (should be 17-19 digit Discord snowflake)", userID)
+			return "", fmt.Errorf("invalid userID format: %s (should be 17-19 digit Discord snowflake)", userID)
+		}
+
 		channel, err := s.UserChannelCreate(userID)
 		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to create DM channel for user %s during announcement", userID)
 			return "", fmt.Errorf("failed to create DM channel: %w", err)
 		}
 		return channel.ID, nil

@@ -20,16 +20,22 @@ func validateRateLimit(userID, action string, duration time.Duration) bool {
 	}
 
 	userSettings.EnsureMapsInitialized()
+
+	hasCustomKey := userSettings.CapSolverAPIKey != "" ||
+		userSettings.EZCaptchaAPIKey != "" ||
+		userSettings.TwoCaptchaAPIKey != ""
+
+	if hasCustomKey {
+		logger.Log.Debugf("User %s has custom API key, bypassing rate limit for action: %s", userID, action)
+		return true
+	}
+
+	logger.Log.Debugf("User %s using default key, checking rate limit for action: %s", userID, action)
+
 	now := time.Now()
 	lastAction := userSettings.LastCommandTimes[action]
 
-	config, exists := notificationConfigs[action]
-	if !exists {
-		config.Cooldown = duration
-		config.MaxPerHour = 4
-	}
-
-	if !lastAction.IsZero() && now.Sub(lastAction) < config.Cooldown {
+	if !lastAction.IsZero() && now.Sub(lastAction) < duration {
 		return false
 	}
 
@@ -50,6 +56,17 @@ func checkActionRateLimit(userID, action string, duration time.Duration) bool {
 	}
 
 	userSettings.EnsureMapsInitialized()
+
+	hasCustomKey := userSettings.CapSolverAPIKey != "" ||
+		userSettings.EZCaptchaAPIKey != "" ||
+		userSettings.TwoCaptchaAPIKey != ""
+
+	if hasCustomKey {
+		logger.Log.Debugf("Premium user %s bypassing action rate limit for: %s", userID, action)
+		return true
+	}
+
+	logger.Log.Debugf("Regular user %s checking action rate limit for: %s (duration: %v)", userID, action, duration)
 
 	now := time.Now()
 	lastAction := userSettings.LastActionTimes[action]
@@ -87,6 +104,100 @@ func getActionLimit(action string) int {
 	}
 }
 
+func processUserAccountsWithStats(s *discordgo.Session, userID string, accounts []models.Account) (int, int) {
+	if len(accounts) == 0 {
+		return 0, 0
+	}
+
+	cfg := configuration.Get()
+	userSettings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Errorf("Failed to get user settings for user %s", userID)
+		return 0, 0
+	}
+
+	if err := validateUserCaptchaService(userID, userSettings); err != nil {
+		logger.Log.WithError(err).Errorf("Captcha service validation failed for user %s", userID)
+		notifyUserOfServiceIssue(s, userID, err)
+		if strings.Contains(err.Error(), "insufficient balance") {
+			return 0, 0
+		}
+	}
+
+	notificationInterval := time.Duration(userSettings.NotificationInterval) * time.Hour
+	if notificationInterval == 0 {
+		notificationInterval = time.Duration(cfg.Intervals.Notification) * time.Hour
+	}
+
+	shouldSendDaily := time.Since(userSettings.LastDailyUpdateNotification) >= notificationInterval
+
+	var accountsToUpdate, accountsToNotify, accountsForDailyUpdate []models.Account
+	successfulChecks := 0
+	failedChecks := 0
+
+	for _, account := range accounts {
+		if !account.IsCheckDisabled && !account.IsExpiredCookie {
+			accountsForDailyUpdate = append(accountsForDailyUpdate, account)
+		}
+
+		if !shouldCheckAccount(account, userSettings) {
+			continue
+		}
+
+		if !checkActionRateLimit(userID, fmt.Sprintf("check_account_%d", account.ID), time.Hour) {
+			logger.Log.Infof("Rate limit reached for account %s (ID: %d, User: %s)", account.Title, account.ID, userID)
+			continue
+		}
+
+		logger.Log.Infof("Starting check for account: %s (ID: %d, User: %s)", account.Title, account.ID, userID)
+		startTime := time.Now()
+		result, err := CheckAccount(account.SSOCookie, userID, "")
+		responseTime := time.Since(startTime).Milliseconds()
+		logger.Log.Infof("Completed check for account: %s (ID: %d, User: %s) - Result: %s, Time: %dms", account.Title, account.ID, userID, result, responseTime)
+
+		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
+			LogAccountCheck(account.ID, userID, models.StatusUnknown, false, userSettings.PreferredCaptchaProvider, 0, responseTime)
+			handleCheckError(s, &account, err)
+			failedChecks++
+			continue
+		}
+
+		LogAccountCheck(account.ID, userID, result, true, userSettings.PreferredCaptchaProvider, 0, responseTime)
+		successfulChecks++
+		now := time.Now()
+		account.LastCheck = now.Unix()
+		account.LastSuccessfulCheck = now
+		account.ConsecutiveErrors = 0
+
+		if hasStatusChanged(account, result) {
+			account.LastStatus = result
+			account.LastStatusChange = now.Unix()
+			accountsToNotify = append(accountsToNotify, account)
+		}
+
+		accountsToUpdate = append(accountsToUpdate, account)
+	}
+
+	if len(accountsToUpdate) > 0 {
+		DBMutex.Lock()
+		if err := database.DB.Save(&accountsToUpdate).Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to batch update accounts")
+		}
+		DBMutex.Unlock()
+	}
+
+	if len(accountsToNotify) > 0 {
+		processNotifications(s, accountsToNotify, userSettings)
+	}
+
+	if shouldSendDaily && len(accountsForDailyUpdate) > 0 {
+		SendConsolidatedDailyUpdate(s, userID, userSettings, accountsForDailyUpdate)
+	}
+
+	return successfulChecks, failedChecks
+}
+
 func processUserAccounts(s *discordgo.Session, userID string, accounts []models.Account) {
 	if len(accounts) == 0 {
 		return
@@ -98,7 +209,7 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 		logger.Log.WithError(err).Errorf("Failed to get user settings for user %s", userID)
 		return
 	}
-	//TODO: Ensure when failed that it only reports on invalid results to the solver and balance for the user
+
 	if err := validateUserCaptchaService(userID, userSettings); err != nil {
 		logger.Log.WithError(err).Errorf("Captcha service validation failed for user %s", userID)
 		notifyUserOfServiceIssue(s, userID, err)
@@ -126,16 +237,24 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 		}
 
 		if !checkActionRateLimit(userID, fmt.Sprintf("check_account_%d", account.ID), time.Hour) {
-			logger.Log.Infof("Rate limit reached for account %s", account.Title)
+			logger.Log.Infof("Rate limit reached for account %s (ID: %d, User: %s)", account.Title, account.ID, userID)
 			continue
 		}
 
+		logger.Log.Infof("Starting check for account: %s (ID: %d, User: %s)", account.Title, account.ID, userID)
+		startTime := time.Now()
 		result, err := CheckAccount(account.SSOCookie, userID, "")
+		responseTime := time.Since(startTime).Milliseconds()
+		logger.Log.Infof("Completed check for account: %s (ID: %d, User: %s) - Result: %s, Time: %dms", account.Title, account.ID, userID, result, responseTime)
+
 		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
+			LogAccountCheck(account.ID, userID, models.StatusUnknown, false, userSettings.PreferredCaptchaProvider, 0, responseTime)
 			handleCheckError(s, &account, err)
 			continue
 		}
 
+		LogAccountCheck(account.ID, userID, result, true, userSettings.PreferredCaptchaProvider, 0, responseTime)
 		now := time.Now()
 		account.LastCheck = now.Unix()
 		account.LastSuccessfulCheck = now
@@ -250,61 +369,63 @@ func notifyUserOfServiceIssue(s *discordgo.Session, userID string, err error) {
 
 func shouldCheckAccount(account models.Account, settings models.UserSettings) bool {
 	cfg := configuration.Get()
-	now := time.Now()
 
 	if account.IsCheckDisabled {
-		logger.Log.Debugf("Account %s is disabled, skipping check", account.Title)
+		logger.Log.Infof("Account %s (ID: %d, User: %s) is disabled, skipping check. Reason: %s", account.Title, account.ID, account.UserID, account.DisabledReason)
 		return false
 	}
 
 	if account.IsExpiredCookie {
-		return false
-	}
-
-	if account.IsPermabanned {
-		logger.Log.Debugf("Account %s is permanently banned, skipping check", account.Title)
+		logger.Log.Infof("Account %s (ID: %d, User: %s) has expired cookie, skipping check", account.Title, account.ID, account.UserID)
 		return false
 	}
 
 	if account.LastCheck == 0 {
+		logger.Log.Infof("Account %s (ID: %d, User: %s) has never been checked, allowing check", account.Title, account.ID, account.UserID)
 		return true
 	}
 
 	lastCheckTime := time.Unix(account.LastCheck, 0)
-	checkInterval := time.Duration(settings.CheckInterval) * time.Minute
 	hasCustomKey := settings.CapSolverAPIKey != "" || settings.EZCaptchaAPIKey != "" || settings.TwoCaptchaAPIKey != ""
 
-	if !hasCustomKey && time.Since(lastCheckTime) < cfg.RateLimits.Default {
-		return false
+	var checkInterval time.Duration
+	if account.IsPermabanned {
+		checkInterval = time.Duration(cfg.Intervals.PermaBanCheck) * time.Hour
+		logger.Log.Debugf("Account %s (ID: %d, User: %s) is permabanned, using permaban check interval: %v", account.Title, account.ID, account.UserID, checkInterval)
+	} else {
+		userInterval := settings.CheckInterval
+		if userInterval < 1 {
+			userInterval = cfg.Intervals.Check
+		}
+		checkInterval = time.Duration(userInterval) * time.Minute
+		logger.Log.Debugf("Account %s using check interval: %v (user: %d, default: %d)", account.Title, checkInterval, settings.CheckInterval, cfg.Intervals.Check)
 	}
 
-	if time.Since(lastCheckTime) < checkInterval {
-		return false
+	if !hasCustomKey {
+		defaultRateLimit := cfg.RateLimits.Default
+		if checkInterval < defaultRateLimit {
+			checkInterval = defaultRateLimit
+			logger.Log.Debugf("Account %s (ID: %d, User: %s) using default rate limit instead: %v (regular user)", account.Title, account.ID, account.UserID, checkInterval)
+		}
+	} else {
+		logger.Log.Debugf("Account %s (ID: %d, User: %s) is premium user, using custom interval: %v", account.Title, account.ID, account.UserID, checkInterval)
 	}
 
-	if account.ConsecutiveErrors > cfg.CaptchaService.MaxRetries && !account.LastErrorTime.IsZero() {
+	if account.ConsecutiveErrors > cfg.ErrorHandling.MaxConsecutiveErrors && !account.LastErrorTime.IsZero() {
 		errorCooldown := time.Duration(cfg.Intervals.Cooldown) * time.Hour
 		if time.Since(account.LastErrorTime) < errorCooldown {
+			logger.Log.Debugf("Account %s in error cooldown, skipping check", account.Title)
 			return false
 		}
 	}
 
-	var nextCheckTime time.Time
-	if account.IsPermabanned {
-		nextCheckTime = time.Unix(account.LastCheck, 0).Add(time.Duration(cfg.Intervals.PermaBanCheck) * time.Hour)
-	} else {
-		checkInterval := settings.CheckInterval
-		if checkInterval < 1 {
-			checkInterval = cfg.Intervals.Check
-		}
-		nextCheckTime = time.Unix(account.LastCheck, 0).Add(time.Duration(checkInterval) * time.Minute)
-	}
+	timeSinceLastCheck := time.Since(lastCheckTime)
+	shouldCheck := timeSinceLastCheck >= checkInterval
 
-	if settings.CapSolverAPIKey != "" || settings.EZCaptchaAPIKey != "" || settings.TwoCaptchaAPIKey != "" {
-		return now.After(nextCheckTime)
-	}
+	logger.Log.Infof("Account %s (ID: %d, User: %s) check decision: should=%v, timeSince=%v, interval=%v, premium=%v",
+		account.Title, account.ID, account.UserID, shouldCheck, timeSinceLastCheck, checkInterval, hasCustomKey)
 
-	return now.After(nextCheckTime) && time.Since(time.Unix(account.LastCheck, 0)) >= cfg.RateLimits.Default
+	return shouldCheck
 }
 
 func hasStatusChanged(account models.Account, newStatus models.Status) bool {
@@ -368,7 +489,7 @@ func isComingFromBannedState(account models.Account) bool {
 	return false
 }
 
-func shouldCheckExpiration(account models.Account, now time.Time) bool {
+func shouldCheckExpiration(account models.Account) bool {
 	cfg := configuration.Get()
 	if account.IsExpiredCookie {
 		return false
@@ -404,7 +525,7 @@ func ValidateDefaultCapsolverConfig() error {
 	cfg := configuration.Get()
 
 	if !cfg.CaptchaService.Capsolver.Enabled {
-		return fmt.Errorf("Capsolver service is disabled")
+		return fmt.Errorf("capsolver service is disabled")
 	}
 
 	if cfg.CaptchaService.Capsolver.ClientKey == "" {
@@ -414,12 +535,12 @@ func ValidateDefaultCapsolverConfig() error {
 		return fmt.Errorf("capsolver App ID not configured")
 	}
 
-	isValid, _, err := validateCapsolverKey(cfg.CaptchaService.Capsolver.ClientKey)
+	isValid, _, err := ValidateCaptchaKey(cfg.CaptchaService.Capsolver.ClientKey, "capsolver")
 	if err != nil {
 		return fmt.Errorf("failed to validate Capsolver key: %w", err)
 	}
 	if !isValid {
-		return fmt.Errorf("Capsolver API key is invalid")
+		return fmt.Errorf("capsolver API key is invalid")
 	}
 
 	return nil
@@ -430,4 +551,110 @@ func GetCheckStatus(isCheckDisabled bool) string {
 		return "Disabled"
 	}
 	return "Enabled"
+}
+
+func checkUserBalance(s *discordgo.Session, user models.UserSettings) {
+	apiKey, balance, err := GetUserCaptchaKey(user.UserID)
+	if err != nil || apiKey == "" {
+		return
+	}
+
+	var threshold float64
+	switch user.PreferredCaptchaProvider {
+	case "ezcaptcha":
+		threshold = 250
+	case "2captcha":
+		threshold = 0.25
+	default:
+		threshold = 250
+	}
+
+	if balance < threshold && time.Since(user.LastBalanceNotification) >= 24*time.Hour {
+		channel, err := s.UserChannelCreate(user.UserID)
+		if err != nil {
+			return
+		}
+
+		embed := &discordgo.MessageEmbed{
+			Title:       "Low Balance Warning",
+			Description: fmt.Sprintf("Your %s balance is low: %.2f points", user.PreferredCaptchaProvider, balance),
+			Color:       0xFFA500,
+			Fields: []*discordgo.MessageEmbedField{
+				{
+					Name:   "Recommended Minimum",
+					Value:  fmt.Sprintf("%.2f points", threshold),
+					Inline: true,
+				},
+				{
+					Name:   "Action Required",
+					Value:  "Please add funds to continue monitoring",
+					Inline: true,
+				},
+			},
+			Timestamp: time.Now().Format(time.RFC3339),
+		}
+
+		if _, err := s.ChannelMessageSendEmbed(channel.ID, embed); err == nil {
+			user.LastBalanceNotification = time.Now()
+			database.DB.Save(&user)
+		}
+	}
+
+	user.LastBalanceCheck = time.Now()
+	user.CaptchaBalance = balance
+	database.DB.Save(&user)
+}
+
+func cleanupErrors() {
+	cfg := configuration.Get()
+	cutoffTime := time.Now().Add(-time.Duration(cfg.ErrorHandling.ErrorNotificationCooldownHours) * time.Hour)
+
+	var accounts []models.Account
+	if err := database.DB.Where("consecutive_errors > ? AND last_error_time < ?", 0, cutoffTime).Find(&accounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to fetch accounts for error cleanup")
+		return
+	}
+
+	cleanupCount := 0
+	for _, account := range accounts {
+		if account.ConsecutiveErrors > 0 && time.Since(account.LastErrorTime) > 24*time.Hour {
+			account.ConsecutiveErrors = 0
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Errorf("Failed to reset error count for account %s", account.Title)
+			} else {
+				cleanupCount++
+			}
+		}
+	}
+
+	if cleanupCount > 0 {
+		logger.Log.Infof("Reset error counts for %d accounts", cleanupCount)
+	}
+}
+
+func cleanupEdgeCases() {
+	var accounts []models.Account
+	if err := database.DB.Where("is_check_disabled = ? AND disabled_reason LIKE ?", true, "%consecutive errors%").Find(&accounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to fetch disabled accounts for edge case cleanup")
+		return
+	}
+
+	reenableCount := 0
+	for _, account := range accounts {
+		if time.Since(account.LastErrorTime) > 48*time.Hour {
+			account.IsCheckDisabled = false
+			account.DisabledReason = ""
+			account.ConsecutiveErrors = 0
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Errorf("Failed to re-enable account %s", account.Title)
+			} else {
+				reenableCount++
+				logger.Log.Infof("Re-enabled account %s after extended cooldown", account.Title)
+			}
+		}
+	}
+
+	if reenableCount > 0 {
+		logger.Log.Infof("Re-enabled %d accounts after extended error cooldown", reenableCount)
+	}
 }

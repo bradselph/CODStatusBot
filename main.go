@@ -94,9 +94,16 @@ func run() error {
 
 	logger.Log.Info("Starting COD Status Bot...")
 
-	services.InitHTTPClients()
-	services.InitializeServices()
 	cfg := configuration.Get()
+	if cfg.Discord.Token == "" {
+		return fmt.Errorf("DISCORD_TOKEN is required but not set")
+	}
+
+	if cfg.Database.Host == "" || cfg.Database.User == "" || cfg.Database.Password == "" || cfg.Database.Name == "" {
+		return fmt.Errorf("database configuration is incomplete")
+	}
+
+	services.InitHTTPClients()
 
 	if !cfg.CaptchaService.Capsolver.Enabled && !cfg.CaptchaService.EZCaptcha.Enabled && !cfg.CaptchaService.TwoCaptcha.Enabled {
 		logger.Log.Warn("No captcha services are enabled - functionality will be limited")
@@ -137,6 +144,9 @@ func run() error {
 	}
 	logger.Log.Info("Database connection established successfully")
 
+	services.InitializeProxyStatsAfterDB()
+	logger.Log.Info("Proxy stats initialization completed")
+
 	appShardManager := services.GetAppShardManager()
 	if err := appShardManager.Initialize(); err != nil {
 		logger.Log.WithError(err).Error("Failed to initialize app shard manager")
@@ -168,19 +178,43 @@ func run() error {
 	periodicTasksCtx, cancelPeriodicTasks := context.WithCancel(ctx)
 	go startPeriodicTasks(periodicTasksCtx, discord)
 
+	errorCleanupCtx, cancelErrorCleanup := context.WithCancel(ctx)
+	go services.StartErrorCleanupRoutine(errorCleanupCtx)
+
+	edgeCaseCtx, cancelEdgeCase := context.WithCancel(ctx)
+	go services.StartEdgeCaseCleanupRoutine(edgeCaseCtx)
+
 	verdansk.InitCleanupRoutine()
 
 	logger.Log.Info("COD Status Bot startup complete")
 
+	go startHealthCheckRoutine(discord)
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	startupComplete := make(chan bool, 1)
+	go func() {
+		time.Sleep(5 * time.Second)
+		startupComplete <- true
+	}()
+
+	select {
+	case <-startupComplete:
+		logger.Log.Info("All services are ready")
+	case <-time.After(time.Duration(cfg.Startup.TimeoutSeconds) * time.Second):
+		logger.Log.Warn("Startup timeout reached, continuing anyway")
+	}
+
 	<-stop
 
 	logger.Log.Info("Shutting down COD Status Bot...")
 
 	cancelPeriodicTasks()
+	cancelErrorCleanup()
+	cancelEdgeCase()
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Startup.ShutdownTimeout)
 	defer shutdownCancel()
 	done := make(chan struct{})
 	go func() {
@@ -194,13 +228,7 @@ func run() error {
 		logger.Log.Warn("Shutdown timed out, forcing exit")
 	}
 
-	if err := discord.Close(); err != nil {
-		logger.Log.WithError(err).Error("Error closing Discord session")
-	}
-
-	if err := database.CloseConnection(); err != nil {
-		logger.Log.WithError(err).Error("Error closing database connection")
-	}
+	services.HandleGracefulShutdown(discord)
 
 	logger.Log.Info("Shutdown complete")
 	return nil
@@ -273,7 +301,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
 			case <-ctx.Done():
 				return
 			default:
-				if err := s.UpdateWatchStatus(0, bot.BotStatusMessage); err != nil {
+				if err := s.UpdateWatchStatus(0, bot.StatusMessage); err != nil {
 					logger.Log.WithError(err).Error("Failed to refresh presence status")
 				}
 				time.Sleep(60 * time.Minute)
@@ -317,7 +345,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
 			case <-ctx.Done():
 				return
 			default:
-				if err := s.UpdateWatchStatus(0, bot.BotStatusMessage); err != nil {
+				if err := s.UpdateWatchStatus(0, bot.StatusMessage); err != nil {
 					logger.Log.WithError(err).Error("Failed to refresh presence status")
 				}
 				time.Sleep(60 * time.Minute)
@@ -343,4 +371,30 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
 	}()
 
 	logger.Log.Info("Periodic tasks started successfully")
+}
+
+func startHealthCheckRoutine(s *discordgo.Session) {
+	cfg := configuration.Get()
+	ticker := time.NewTicker(cfg.Startup.HealthCheckInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if s.DataReady == false {
+			logger.Log.Error("Discord connection is not ready")
+			continue
+		}
+
+		if err := database.CheckConnection(); err != nil {
+			logger.Log.WithError(err).Error("Database health check failed")
+			continue
+		}
+
+		shardMgr := services.GetAppShardManager()
+		if !shardMgr.Initialized {
+			logger.Log.Error("Shard manager is not initialized")
+			continue
+		}
+
+		logger.Log.Debug("Health check passed")
+	}
 }

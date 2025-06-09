@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/bradselph/CODStatusBot/configuration"
+	"github.com/bradselph/CODStatusBot/database"
 	"github.com/bradselph/CODStatusBot/logger"
+	"github.com/bradselph/CODStatusBot/models"
+	"github.com/bwmarrin/discordgo"
 )
 
 type CaptchaSolver interface {
@@ -707,4 +710,251 @@ func validate2CaptchaKey(apiKey string) (bool, float64, error) {
 	}
 
 	return true, result.Balance, nil
+}
+
+func GetFallbackProvider(primaryProvider string) string {
+	cfg := configuration.Get()
+	switch primaryProvider {
+	case "capsolver":
+		if cfg.CaptchaService.EZCaptcha.Enabled {
+			return "ezcaptcha"
+		}
+		if cfg.CaptchaService.TwoCaptcha.Enabled {
+			return "2captcha"
+		}
+	case "ezcaptcha":
+		if cfg.CaptchaService.Capsolver.Enabled {
+			return "capsolver"
+		}
+		if cfg.CaptchaService.TwoCaptcha.Enabled {
+			return "2captcha"
+		}
+	case "2captcha":
+		if cfg.CaptchaService.Capsolver.Enabled {
+			return "capsolver"
+		}
+		if cfg.CaptchaService.EZCaptcha.Enabled {
+			return "ezcaptcha"
+		}
+	}
+	return ""
+}
+
+func GetDefaultCaptchaAPIKey(provider string) (string, error) {
+	cfg := configuration.Get()
+	switch provider {
+	case "capsolver":
+		if !cfg.CaptchaService.Capsolver.Enabled {
+			return "", fmt.Errorf("capsolver service is disabled")
+		}
+		return cfg.CaptchaService.Capsolver.ClientKey, nil
+	case "ezcaptcha":
+		if !cfg.CaptchaService.EZCaptcha.Enabled {
+			return "", fmt.Errorf("ezcaptcha service is disabled")
+		}
+		return cfg.CaptchaService.EZCaptcha.ClientKey, nil
+	case "2captcha":
+		if !cfg.CaptchaService.TwoCaptcha.Enabled {
+			return "", fmt.Errorf("2captcha service is disabled")
+		}
+		return cfg.CaptchaService.TwoCaptcha.ClientKey, nil
+	default:
+		return "", fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+func SolveCaptchaWithFallback(userID, siteKey, pageURL string) (string, string, error) {
+	settings, err := GetUserSettings(userID)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get user settings: %w", err)
+	}
+
+	isUsingDefaultKey := settings.CapSolverAPIKey == "" && settings.EZCaptchaAPIKey == "" && settings.TwoCaptchaAPIKey == ""
+
+	primaryProvider := settings.PreferredCaptchaProvider
+	if !IsServiceEnabled(primaryProvider) {
+		logger.Log.Warnf("Primary provider %s is disabled, switching to alternative", primaryProvider)
+		if IsServiceEnabled("capsolver") {
+			primaryProvider = "capsolver"
+		} else if IsServiceEnabled("ezcaptcha") {
+			primaryProvider = "ezcaptcha"
+		} else if IsServiceEnabled("2captcha") {
+			primaryProvider = "2captcha"
+		} else {
+			return "", primaryProvider, fmt.Errorf("no captcha services are enabled")
+		}
+	}
+
+	logger.Log.Infof("Attempting primary captcha provider %s for user %s (using default key: %v)", primaryProvider, userID, isUsingDefaultKey)
+	primaryResult, usedProvider, err := tryPrimaryProvider(userID, primaryProvider, siteKey, pageURL)
+	if err == nil {
+		logger.Log.Infof("Primary captcha provider %s succeeded for user %s", primaryProvider, userID)
+		return primaryResult, usedProvider, nil
+	}
+
+	logger.Log.WithError(err).Warnf("Primary captcha provider %s failed for user %s, attempting fallback", primaryProvider, userID)
+
+	if !settings.EnableFallback {
+		logger.Log.Debugf("Fallback disabled for user %s", userID)
+		return "", primaryProvider, fmt.Errorf("fallback disabled, primary provider failed: %w", err)
+	}
+
+	if !settings.UseFallbackForDefault && isUsingDefaultKey {
+		logger.Log.Debugf("Fallback disabled for default key users, user %s", userID)
+		return "", primaryProvider, fmt.Errorf("fallback disabled for default key users, primary provider failed: %w", err)
+	}
+
+	cfg := configuration.Get()
+	if cfg.Fallback.TimeoutSeconds > 0 {
+		logger.Log.Debugf("Using fallback timeout of %d seconds for user %s", cfg.Fallback.TimeoutSeconds, userID)
+	}
+
+	fallbackProvider := getFallbackProviderForUser(settings)
+	if fallbackProvider == "" || fallbackProvider == primaryProvider {
+		logger.Log.Warnf("No valid fallback provider available for user %s (fallback: %s, primary: %s)", userID, fallbackProvider, primaryProvider)
+		return "", primaryProvider, fmt.Errorf("no valid fallback provider available: %w", err)
+	}
+
+	if !IsServiceEnabled(fallbackProvider) {
+		logger.Log.Warnf("Fallback provider %s is disabled for user %s", fallbackProvider, userID)
+		return "", primaryProvider, fmt.Errorf("fallback provider %s is disabled: %w", fallbackProvider, err)
+	}
+
+	fallbackResult, _, fallbackErr := tryFallbackProvider(userID, fallbackProvider, siteKey, pageURL)
+	if fallbackErr != nil {
+		logger.Log.WithError(fallbackErr).Errorf("Fallback captcha provider %s also failed for user %s", fallbackProvider, userID)
+		return "", primaryProvider, fmt.Errorf("both primary (%s) and fallback (%s) failed: primary=%w, fallback=%w", primaryProvider, fallbackProvider, err, fallbackErr)
+	}
+
+	logger.Log.Infof("Fallback captcha provider %s succeeded for user %s (using default key: %v)", fallbackProvider, userID, isUsingDefaultKey)
+
+	if isUsingDefaultKey {
+		go notifyDefaultKeyUserAboutFallback(userID, primaryProvider, fallbackProvider)
+	}
+
+	return fallbackResult, fallbackProvider, nil
+}
+
+func tryPrimaryProvider(userID, provider, siteKey, pageURL string) (string, string, error) {
+	apiKey, _, err := GetUserCaptchaKey(userID)
+	if err != nil {
+		return "", provider, err
+	}
+
+	solver, err := NewCaptchaSolver(apiKey, provider)
+	if err != nil {
+		return "", provider, err
+	}
+
+	response, err := solver.SolveReCaptchaV2(siteKey, pageURL)
+	return response, provider, err
+}
+
+func tryFallbackProvider(userID, fallbackProvider, siteKey, pageURL string) (string, string, error) {
+	settings, err := GetUserSettings(userID)
+	if err != nil {
+		return "", fallbackProvider, err
+	}
+
+	hasCustomKey := settings.CapSolverAPIKey != "" || settings.EZCaptchaAPIKey != "" || settings.TwoCaptchaAPIKey != ""
+	var apiKey string
+
+	if hasCustomKey {
+		apiKey = getUserFallbackAPIKey(settings, fallbackProvider)
+		if apiKey == "" {
+			apiKey, err = GetDefaultCaptchaAPIKey(fallbackProvider)
+			if err != nil {
+				return "", fallbackProvider, err
+			}
+		}
+	} else {
+		apiKey, err = GetDefaultCaptchaAPIKey(fallbackProvider)
+		if err != nil {
+			return "", fallbackProvider, err
+		}
+	}
+
+	solver, err := NewCaptchaSolver(apiKey, fallbackProvider)
+	if err != nil {
+		return "", fallbackProvider, err
+	}
+
+	response, err := solver.SolveReCaptchaV2(siteKey, pageURL)
+	return response, fallbackProvider, err
+}
+
+func getFallbackProviderForUser(settings models.UserSettings) string {
+	if settings.FallbackCaptchaProvider != "" {
+		return settings.FallbackCaptchaProvider
+	}
+	return GetFallbackProvider(settings.PreferredCaptchaProvider)
+}
+
+func getUserFallbackAPIKey(settings models.UserSettings, fallbackProvider string) string {
+	switch fallbackProvider {
+	case "capsolver":
+		return settings.CapSolverAPIKey
+	case "ezcaptcha":
+		return settings.EZCaptchaAPIKey
+	case "2captcha":
+		return settings.TwoCaptchaAPIKey
+	default:
+		return ""
+	}
+}
+
+func notifyDefaultKeyUserAboutFallback(userID, primaryProvider, fallbackProvider string) {
+	settings, err := GetUserSettings(userID)
+	if err != nil {
+		logger.Log.WithError(err).Error("Failed to get user settings for fallback notification")
+		return
+	}
+
+	if settings.HasSeenFallbackNotice {
+		return
+	}
+
+	providerLabels := map[string]string{
+		"capsolver": "Capsolver",
+		"ezcaptcha": "EZCaptcha",
+		"2captcha":  "2Captcha",
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "Fallback Service Used Successfully",
+		Description: fmt.Sprintf("Your primary captcha service (%s) failed, but the fallback service (%s) completed your check successfully.", providerLabels[primaryProvider], providerLabels[fallbackProvider]),
+		Color:       0x00D4AA,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "Recommendation",
+				Value:  "Consider setting up your own API key to support the bot and get premium features like unlimited checks and faster intervals.",
+				Inline: false,
+			},
+			{
+				Name:   "Benefits of Your Own Key",
+				Value:  "• No rate limits\n• Faster check intervals\n• More account slots\n• Priority support",
+				Inline: false,
+			},
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "Use /setcaptchaservice to configure your own API key",
+		},
+	}
+
+	var accounts []models.Account
+	if err := database.DB.Where("user_id = ?", userID).First(&accounts).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to get user accounts for fallback notification")
+		return
+	}
+
+	if len(accounts) > 0 {
+		if err := SendNotification(nil, accounts[0], embed, "", "fallback_success_notice"); err != nil {
+			logger.Log.WithError(err).Error("Failed to send fallback success notification")
+		}
+		settings.HasSeenFallbackNotice = true
+		if err := database.DB.Save(&settings).Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to mark fallback notice as seen")
+		}
+	}
 }
