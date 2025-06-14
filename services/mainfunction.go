@@ -44,6 +44,12 @@ func CheckAccounts(s *discordgo.Session) {
 		}
 	}
 
+	shardMgr.RLock()
+	shardID := shardMgr.ShardID
+	totalShards := shardMgr.TotalShards
+	instanceID := shardMgr.InstanceID
+	shardMgr.RUnlock()
+
 	var totalAccounts int64
 	var disabledAccounts int64
 	var expiredCookieAccounts int64
@@ -61,8 +67,8 @@ func CheckAccounts(s *discordgo.Session) {
 		logger.Log.WithError(err).Error("Failed to count expired cookie accounts")
 	}
 
-	logger.Log.Infof("Account status summary: Total: %d, Disabled: %d, Expired Cookies: %d, Eligible for check: %d",
-		totalAccounts, disabledAccounts, expiredCookieAccounts, totalAccounts-disabledAccounts-expiredCookieAccounts)
+	logger.Log.Infof("Shard %d/%d - Account status summary: Total: %d, Disabled: %d, Expired Cookies: %d, Eligible for check: %d",
+		shardID, totalShards, totalAccounts, disabledAccounts, expiredCookieAccounts, totalAccounts-disabledAccounts-expiredCookieAccounts)
 
 	var accounts []models.Account
 	if err := database.DB.Where("is_check_disabled = ? AND is_expired_cookie = ?", false, false).Find(&accounts).Error; err != nil {
@@ -70,12 +76,19 @@ func CheckAccounts(s *discordgo.Session) {
 		return
 	}
 
+	accounts = FilterAccountsByShardAssignment(accounts)
+
 	accountsByUser := make(map[string][]models.Account)
 	for _, account := range accounts {
 		if account.UserID == "" {
 			logger.Log.Warnf("Skipping account %s (ID: %d) with empty UserID", account.Title, account.ID)
 			continue
 		}
+
+		if !shardMgr.IsUserAssignedToShard(account.UserID) {
+			continue
+		}
+
 		accountsByUser[account.UserID] = append(accountsByUser[account.UserID], account)
 	}
 
@@ -86,10 +99,6 @@ func CheckAccounts(s *discordgo.Session) {
 	start := time.Now()
 
 	for userID, userAccounts := range accountsByUser {
-		if !shardMgr.IsUserAssignedToShard(userID) {
-			skippedCount++
-			continue
-		}
 		userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
 		successfulChecks += userSuccess
 		failedChecks += userFailed
@@ -97,18 +106,105 @@ func CheckAccounts(s *discordgo.Session) {
 	}
 
 	duration := time.Since(start).Seconds()
-	logger.Log.Infof("Completed periodic account check: processed %d users, skipped %d users, successful checks: %d, failed checks: %d, in %.2f seconds",
-		processedCount, skippedCount, successfulChecks, failedChecks, duration)
+	logger.Log.Infof("Shard %d/%d completed periodic account check: processed %d users, skipped %d users, successful checks: %d, failed checks: %d, in %.2f seconds",
+		shardID, totalShards, processedCount, skippedCount, successfulChecks, failedChecks, duration)
 
-	if err := updateShardStats(shardMgr.InstanceID, processedCount, duration); err != nil {
+	if err := updateShardStats(instanceID, processedCount, successfulChecks, failedChecks, duration); err != nil {
 		logger.Log.WithError(err).Error("Failed to update shard stats")
 	}
+
+	LogAnalyticsEvent("shard_check_completed", "", "", "", "", shardID, instanceID, map[string]interface{}{
+		"processed_users":   processedCount,
+		"successful_checks": successfulChecks,
+		"failed_checks":     failedChecks,
+		"duration_seconds":  duration,
+		"total_accounts":    len(accounts),
+	})
 }
-func updateShardStats(instanceID string, processedUsers int, durationSec float64) error {
+
+func LogAnalyticsEvent(s string, s2 string, s3 string, s4 string, s5 string, id int, id2 string, m map[string]interface{}) {
+
+}
+
+func processUserAccountsWithStats(s *discordgo.Session, userID string, accounts []models.Account) (int, int) {
+	var userSettings models.UserSettings
+	if err := database.DB.Where("user_id = ?", userID).First(&userSettings).Error; err != nil {
+		userSettings = models.UserSettings{
+			UserID:                   userID,
+			CheckInterval:            configuration.Get().Intervals.Check,
+			NotificationInterval:     configuration.Get().Intervals.Notification,
+			CooldownDuration:         configuration.Get().Intervals.Cooldown,
+			StatusChangeCooldown:     configuration.Get().Intervals.StatusChange,
+			PreferredCaptchaProvider: "capsolver",
+			NotificationType:         "channel",
+			PreferEphemeralResponses: true,
+			EnableFallback:           true,
+			UseFallbackForDefault:    true,
+		}
+		userSettings.EnsureMapsInitialized()
+		if err := database.DB.Create(&userSettings).Error; err != nil {
+			logger.Log.WithError(err).Errorf("Failed to create user settings for %s", userID)
+			return 0, len(accounts)
+		}
+	}
+
+	successCount := 0
+	failCount := 0
+
+	for _, account := range accounts {
+		if time.Since(time.Unix(account.LastCheck, 0)) < time.Duration(userSettings.CheckInterval)*time.Minute {
+			continue
+		}
+
+		if account.ConsecutiveErrors >= configuration.Get().ErrorHandling.MaxConsecutiveErrors {
+			if !account.IsCheckDisabled {
+				disableAccount(s, account, fmt.Sprintf("Too many consecutive errors (%d)", account.ConsecutiveErrors))
+			}
+			failCount++
+			continue
+		}
+
+		result, err := CheckAccountWithRetry(account.SSOCookie, userID, "")
+		if err != nil {
+			logger.Log.WithError(err).Errorf("Failed to check account %s for user %s", account.Title, userID)
+
+			account.ConsecutiveErrors++
+			account.LastErrorTime = time.Now()
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to update account error count")
+			}
+
+			failCount++
+			continue
+		}
+
+		account.LastCheck = time.Now().Unix()
+		account.ConsecutiveErrors = 0
+		account.LastSuccessfulCheck = time.Now()
+
+		if account.LastStatus != result {
+			HandleStatusChange(s, account, result, &userSettings)
+		} else {
+			if err := database.DB.Save(&account).Error; err != nil {
+				logger.Log.WithError(err).Error("Failed to update account check time")
+			}
+		}
+
+		successCount++
+	}
+
+	return successCount, failCount
+}
+
+func updateShardStats(instanceID string, processedUsers, successfulChecks, failedChecks int, durationSec float64) error {
 	stats := map[string]interface{}{
-		"last_check_time": time.Now(),
-		"processed_users": processedUsers,
-		"duration_sec":    durationSec,
+		"last_check_time":   time.Now(),
+		"processed_users":   processedUsers,
+		"successful_checks": successfulChecks,
+		"failed_checks":     failedChecks,
+		"duration_sec":      durationSec,
+		"check_rate":        float64(successfulChecks+failedChecks) / durationSec,
+		"success_rate":      float64(successfulChecks) / float64(successfulChecks+failedChecks) * 100,
 	}
 	statJSON, err := json.Marshal(stats)
 	if err != nil {
@@ -119,7 +215,35 @@ func updateShardStats(instanceID string, processedUsers int, durationSec float64
 		Update("stats", string(statJSON)).Error
 }
 
+func CheckAccountWithRetry(ssoCookie, userID, captchaProvider string) (models.Status, error) {
+	maxRetries := 3
+	baseDelay := time.Second
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			logger.Log.Debugf("Retrying account check for user %s in %v (attempt %d/%d)", userID, delay, attempt+1, maxRetries)
+			time.Sleep(delay)
+		}
+
+		result, err := CheckAccount(ssoCookie, userID, captchaProvider)
+		if err == nil {
+			return result, nil
+		}
+
+		if attempt == maxRetries-1 {
+			return models.StatusUnknown, err
+		}
+
+		logger.Log.WithError(err).Warnf("Account check attempt %d/%d failed for user %s", attempt+1, maxRetries, userID)
+	}
+
+	return models.StatusUnknown, fmt.Errorf("all retry attempts failed")
+}
+
 func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus models.Status, userSettings *models.UserSettings) {
+	shardMgr := GetAppShardManager()
+
 	if account.IsPermabanned && newStatus == models.StatusPermaban {
 		if account.LastNotification != 0 {
 			logger.Log.Debugf("Account %s already notified of permaban, skipping notification", account.Title)
@@ -139,8 +263,8 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 	}
 
 	if statusChanged || gameSpecificChanged {
-		logger.Log.Debugf("Status change detected for account %s: %s -> %s (Game-specific changes: %v)",
-			account.Title, account.LastStatus, newStatus, gameSpecificChanged)
+		logger.Log.Debugf("Shard %d - Status change detected for account %s: %s -> %s (Game-specific changes: %v)",
+			shardMgr.ShardID, account.Title, account.LastStatus, newStatus, gameSpecificChanged)
 
 		DBMutex.Lock()
 		defer DBMutex.Unlock()
@@ -188,7 +312,8 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 		if err := database.DB.Create(&statusLog).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to create status log")
 		} else {
-			logger.Log.Infof("Created status change log for account %s: %s -> %s", account.Title, previousStatus, newStatus)
+			logger.Log.Infof("Shard %d - Created status change log for account %s: %s -> %s",
+				shardMgr.ShardID, account.Title, previousStatus, newStatus)
 		}
 
 		ban := models.Ban{
@@ -207,7 +332,8 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 		if err := database.DB.Create(&ban).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to create ban record")
 		} else {
-			logger.Log.Infof("Created ban record for account %s: %s -> %s", account.Title, previousStatus, newStatus)
+			logger.Log.Infof("Shard %d - Created ban record for account %s: %s -> %s",
+				shardMgr.ShardID, account.Title, previousStatus, newStatus)
 		}
 
 		LogStatusChange(account.ID, account.UserID, newStatus, previousStatus)
@@ -237,6 +363,13 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 		if err := database.DB.Save(&account).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to save final account status")
 		}
+
+		LogAnalyticsEvent("status_change", account.UserID, "", "", string(newStatus), shardMgr.ShardID, shardMgr.InstanceID, map[string]interface{}{
+			"account_id":      account.ID,
+			"previous_status": string(previousStatus),
+			"new_status":      string(newStatus),
+			"account_title":   account.Title,
+		})
 	}
 }
 
@@ -543,7 +676,8 @@ func disableAccount(s *discordgo.Session, account models.Account, reason string)
 		return
 	}
 
-	logger.Log.Infof("Account %s has been disabled. Reason: %s", account.Title, reason)
+	shardMgr := GetAppShardManager()
+	logger.Log.Infof("Shard %d - Account %s has been disabled. Reason: %s", shardMgr.ShardID, account.Title, reason)
 	NotifyUserAboutDisabledAccount(s, account, reason)
 }
 

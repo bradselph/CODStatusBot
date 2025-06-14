@@ -149,18 +149,22 @@ func run() error {
 
 	appShardManager := services.GetAppShardManager()
 	if err := appShardManager.Initialize(); err != nil {
-		logger.Log.WithError(err).Error("Failed to initialize app shard manager")
+		return fmt.Errorf("failed to initialize app shard manager: %w", err)
 	}
 
 	shardCtx, shardCancel := context.WithCancel(context.Background())
 	defer shardCancel()
 
 	appShardManager.StartHeartbeat(shardCtx)
-	logger.Log.Infof("Application shard %d of %d initialized successfully",
-		appShardManager.ShardID, appShardManager.TotalShards)
+	logger.Log.Infof("Application shard %d of %d initialized successfully (Instance: %s)",
+		appShardManager.ShardID, appShardManager.TotalShards, appShardManager.InstanceID)
 
-	services.StartAdminAPI()
-	logger.Log.Info("Admin API started successfully")
+	if appShardManager.IsLeader() {
+		services.StartAdminAPI()
+		logger.Log.Info("Started Admin API (leader shard)")
+	} else {
+		logger.Log.Info("Skipping Admin API startup (not leader shard)")
+	}
 
 	var err error
 	discord, err = bot.StartBot()
@@ -176,19 +180,28 @@ func run() error {
 	defer cancel()
 
 	periodicTasksCtx, cancelPeriodicTasks := context.WithCancel(ctx)
-	go startPeriodicTasks(periodicTasksCtx, discord)
+	go startPeriodicTasks(periodicTasksCtx, discord, appShardManager)
 
 	errorCleanupCtx, cancelErrorCleanup := context.WithCancel(ctx)
-	go services.StartErrorCleanupRoutine(errorCleanupCtx)
+	if appShardManager.IsLeader() {
+		go services.StartErrorCleanupRoutine(errorCleanupCtx)
+		logger.Log.Info("Started error cleanup routine (leader shard)")
+	}
 
 	edgeCaseCtx, cancelEdgeCase := context.WithCancel(ctx)
-	go services.StartEdgeCaseCleanupRoutine(edgeCaseCtx)
+	if appShardManager.IsLeader() {
+		go services.StartEdgeCaseCleanupRoutine(edgeCaseCtx)
+		logger.Log.Info("Started edge case cleanup routine (leader shard)")
+	}
 
-	verdansk.InitCleanupRoutine()
+	if appShardManager.IsLeader() {
+		verdansk.InitCleanupRoutine()
+		logger.Log.Info("Initialized Verdansk cleanup routine (leader shard)")
+	}
 
 	logger.Log.Info("COD Status Bot startup complete")
 
-	go startHealthCheckRoutine(discord)
+	go startHealthCheckRoutine(discord, appShardManager)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -206,6 +219,12 @@ func run() error {
 		logger.Log.Warn("Startup timeout reached, continuing anyway")
 	}
 
+	services.LogAnalyticsEvent("shard_startup_complete", "", "", "", "",
+		appShardManager.ShardID, appShardManager.InstanceID, map[string]interface{}{
+			"is_leader":                appShardManager.IsLeader(),
+			"startup_duration_seconds": 5,
+		})
+
 	<-stop
 
 	logger.Log.Info("Shutting down COD Status Bot...")
@@ -218,6 +237,7 @@ func run() error {
 	defer shutdownCancel()
 	done := make(chan struct{})
 	go func() {
+		services.HandleGracefulShutdown(discord)
 		close(done)
 	}()
 
@@ -228,173 +248,183 @@ func run() error {
 		logger.Log.Warn("Shutdown timed out, forcing exit")
 	}
 
-	services.HandleGracefulShutdown(discord)
+	services.LogAnalyticsEvent("shard_shutdown", "", "", "", "",
+		appShardManager.ShardID, appShardManager.InstanceID, map[string]interface{}{
+			"shutdown_reason": "signal_received",
+		})
 
 	logger.Log.Info("Shutdown complete")
 	return nil
 }
 
-func startPeriodicTasks(ctx context.Context, s *discordgo.Session) {
+func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager *services.AppShardManager) {
 	cfg := configuration.Get()
+
 	go func() {
+		checkTicker := time.NewTicker(time.Duration(cfg.Intervals.Sleep) * time.Minute)
+		defer checkTicker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				services.CheckAccounts(s)
-				time.Sleep(time.Duration(cfg.Intervals.Sleep) * time.Minute)
+			case <-checkTicker.C:
+				if shardManager.Initialized {
+					logger.Log.Debugf("Shard %d starting account check cycle", shardManager.ShardID)
+					services.CheckAccounts(s)
+				}
 			}
 		}
 	}()
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				var users []models.UserSettings
-				if err := database.DB.Find(&users).Error; err != nil {
-					logger.Log.WithError(err).Error("Failed to fetch users for consolidated updates")
-					time.Sleep(time.Hour)
-					continue
-				}
 
-				for _, user := range users {
-					var accounts []models.Account
-					if err := database.DB.Where("user_id = ? AND is_check_disabled = ? AND is_expired_cookie = ?",
-						user.UserID, false, false).Find(&accounts).Error; err != nil {
-						logger.Log.WithError(err).Error("Failed to fetch accounts for user")
+	if shardManager.IsLeader() {
+		go func() {
+			updateTicker := time.NewTicker(time.Hour)
+			defer updateTicker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-updateTicker.C:
+					logger.Log.Debug("Leader shard processing consolidated daily updates")
+					var users []models.UserSettings
+					if err := database.DB.Find(&users).Error; err != nil {
+						logger.Log.WithError(err).Error("Failed to fetch users for consolidated updates")
 						continue
 					}
+					for _, user := range users {
+						if !shardManager.IsUserAssignedToShard(user.UserID) {
 
-					if time.Since(user.LastDailyUpdateNotification) >=
-						time.Duration(cfg.Intervals.Notification)*time.Hour {
-						services.SendConsolidatedDailyUpdate(s, user.UserID, user, accounts)
+							processedUsers := 0
+							continue
+						}
+
+						var accounts []models.Account
+						if err := database.DB.Where("user_id = ? AND is_check_disabled = ? AND is_expired_cookie = ?",
+							user.UserID, false, false).Find(&accounts).Error; err != nil {
+							logger.Log.WithError(err).Error("Failed to fetch accounts for user")
+							continue
+						}
+
+						if time.Since(user.LastDailyUpdateNotification) >=
+							time.Duration(cfg.Intervals.Notification)*time.Hour {
+							services.SendConsolidatedDailyUpdate(s, user.UserID, user, accounts)
+							processedUsers++
+						}
+					}
+					logger.Log.Debugf("Leader shard processed %d users for daily updates", processedUsers)
+				}
+			}
+		}()
+
+		go services.ScheduleBalanceChecks(s)
+
+		go func() {
+			announcementTicker := time.NewTicker(24 * time.Hour)
+			defer announcementTicker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-announcementTicker.C:
+					if err := services.SendAnnouncementToAllUsers(s); err != nil {
+						logger.Log.WithError(err).Error("Failed to send global announcement")
 					}
 				}
-
-				time.Sleep(time.Hour)
 			}
-		}
-	}()
+		}()
 
-	go services.ScheduleBalanceChecks(s)
+		go func() {
+			cleanupTicker := time.NewTicker(12 * time.Hour)
+			defer cleanupTicker.Stop()
 
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				if err := services.SendAnnouncementToAllUsers(s); err != nil {
-					logger.Log.WithError(err).Error("Failed to send global announcement")
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-cleanupTicker.C:
+					services.CleanupOldRateLimitData()
+					logger.Log.Debug("Leader shard completed rate limit cleanup")
 				}
-				time.Sleep(24 * time.Hour)
 			}
-		}
-	}()
+		}()
+
+		go func() {
+			userCleanupTicker := time.NewTicker(cfg.Users.CleanupInterval)
+			defer userCleanupTicker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-userCleanupTicker.C:
+					services.CleanupInactiveUsers()
+					logger.Log.Info("Leader shard completed inactive users cleanup")
+					services.LogInstallationStats(s)
+				}
+			}
+		}()
+
+		go func() {
+			analyticsTicker := time.NewTicker(24 * time.Hour)
+			defer analyticsTicker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-analyticsTicker.C:
+					if err := services.CleanupOldAnalyticsData(cfg.Admin.RetentionDays); err != nil {
+						logger.Log.WithError(err).Error("Failed to clean up old analytics data")
+					}
+				}
+			}
+		}()
+	}
 
 	go func() {
+		statusTicker := time.NewTicker(60 * time.Minute)
+		defer statusTicker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			default:
+			case <-statusTicker.C:
 				if err := s.UpdateWatchStatus(0, bot.StatusMessage); err != nil {
 					logger.Log.WithError(err).Error("Failed to refresh presence status")
 				}
-				time.Sleep(60 * time.Minute)
 			}
 		}
 	}()
 
-	go func() {
-		ticker := time.NewTicker(12 * time.Hour)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				services.CleanupOldRateLimitData()
-			}
-		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(cfg.Users.CleanupInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				services.CleanupInactiveUsers()
-				logger.Log.Info("Ran inactive users cleanup")
-				services.LogInstallationStats(s)
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				if err := s.UpdateWatchStatus(0, bot.StatusMessage); err != nil {
-					logger.Log.WithError(err).Error("Failed to refresh presence status")
-				}
-				time.Sleep(60 * time.Minute)
-			}
-		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				cfg := configuration.Get()
-				if err := services.CleanupOldAnalyticsData(cfg.Admin.RetentionDays); err != nil {
-					logger.Log.WithError(err).Error("Failed to clean up old analytics data")
-				}
-			}
-		}
-	}()
-
-	logger.Log.Info("Periodic tasks started successfully")
+	logger.Log.Infof("Shard %d periodic tasks started (leader: %v)",
+		shardManager.ShardID, shardManager.IsLeader())
 }
 
-func startHealthCheckRoutine(s *discordgo.Session) {
+func startHealthCheckRoutine(s *discordgo.Session, shardManager *services.AppShardManager) {
 	cfg := configuration.Get()
 	ticker := time.NewTicker(cfg.Startup.HealthCheckInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		if s.DataReady == false {
-			logger.Log.Error("Discord connection is not ready")
+			logger.Log.Errorf("Shard %d Discord connection is not ready", shardManager.ShardID)
 			continue
 		}
 
 		if err := database.CheckConnection(); err != nil {
-			logger.Log.WithError(err).Error("Database health check failed")
+			logger.Log.WithError(err).Errorf("Shard %d database health check failed", shardManager.ShardID)
 			continue
 		}
 
-		shardMgr := services.GetAppShardManager()
-		if !shardMgr.Initialized {
-			logger.Log.Error("Shard manager is not initialized")
+		if !shardManager.Initialized {
+			logger.Log.Errorf("Shard %d manager is not initialized", shardManager.ShardID)
 			continue
 		}
 
-		logger.Log.Debug("Health check passed")
+		logger.Log.Debugf("Shard %d health check passed", shardManager.ShardID)
 	}
 }

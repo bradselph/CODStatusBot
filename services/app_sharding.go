@@ -22,6 +22,8 @@ type AppShardManager struct {
 	InstanceID    string
 	HeartbeatTime time.Time
 	Initialized   bool
+	isLeader      bool
+	lastRebalance time.Time
 }
 
 var appShardManager *AppShardManager
@@ -29,8 +31,9 @@ var appShardManager *AppShardManager
 func GetAppShardManager() *AppShardManager {
 	if appShardManager == nil {
 		appShardManager = &AppShardManager{
-			InstanceID:  generateInstanceID(),
-			Initialized: false,
+			InstanceID:    generateInstanceID(),
+			Initialized:   false,
+			lastRebalance: time.Now(),
 		}
 	}
 	return appShardManager
@@ -40,32 +43,64 @@ func (asm *AppShardManager) Initialize() error {
 	asm.Lock()
 	defer asm.Unlock()
 
+	if asm.Initialized {
+		return nil
+	}
+
 	shardID := os.Getenv("SHARD_ID")
 	totalShards := os.Getenv("TOTAL_SHARDS")
 
 	if shardID == "" || totalShards == "" {
-		logger.Log.Info("No sharding configuration found, running in single-shard mode")
+		return asm.initializeAutoShard()
+	}
+
+	id, err := strconv.Atoi(shardID)
+	if err != nil {
+		return fmt.Errorf("invalid SHARD_ID: %w", err)
+	}
+
+	total, err := strconv.Atoi(totalShards)
+	if err != nil {
+		return fmt.Errorf("invalid TOTAL_SHARDS: %w", err)
+	}
+
+	if id < 0 || id >= total {
+		return fmt.Errorf("SHARD_ID must be between 0 and TOTAL_SHARDS-1")
+	}
+
+	asm.ShardID = id
+	asm.TotalShards = total
+
+	return asm.registerShard()
+}
+
+func (asm *AppShardManager) initializeAutoShard() error {
+	if !asm.ensureShardInfoTable() {
+		return fmt.Errorf("failed to ensure shard_infos table exists")
+	}
+
+	var activeShards []models.ShardInfo
+	if err := database.DB.Where("status = 'active' AND last_heartbeat > ?",
+		time.Now().Add(-2*time.Minute)).Find(&activeShards).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to query active shards")
 		asm.ShardID = 0
 		asm.TotalShards = 1
 	} else {
-		id, err := strconv.Atoi(shardID)
-		if err != nil {
-			return fmt.Errorf("invalid SHARD_ID: %w", err)
-		}
+		asm.ShardID = len(activeShards)
+		asm.TotalShards = len(activeShards) + 1
 
-		total, err := strconv.Atoi(totalShards)
-		if err != nil {
-			return fmt.Errorf("invalid TOTAL_SHARDS: %w", err)
+		for _, shard := range activeShards {
+			if shard.ShardID >= asm.ShardID {
+				asm.ShardID = shard.ShardID + 1
+			}
 		}
-
-		if id < 0 || id >= total {
-			return fmt.Errorf("SHARD_ID must be between 0 and TOTAL_SHARDS-1")
-		}
-
-		asm.ShardID = id
-		asm.TotalShards = total
 	}
 
+	logger.Log.Infof("Auto-assigned shard %d of %d", asm.ShardID, asm.TotalShards)
+	return asm.registerShard()
+}
+
+func (asm *AppShardManager) ensureShardInfoTable() bool {
 	if !database.DB.Migrator().HasTable("shard_infos") {
 		logger.Log.Warn("shard_infos table does not exist, creating it manually")
 		shardInfosTableSQL := `CREATE TABLE IF NOT EXISTS shard_infos (
@@ -79,16 +114,33 @@ func (asm *AppShardManager) Initialize() error {
 			last_heartbeat datetime(3) NULL,
 			status varchar(191) DEFAULT 'active',
 			stats text,
+			startup_time datetime(3),
+			process_id bigint,
+			hostname varchar(255),
 			INDEX idx_shard_infos_deleted_at (deleted_at),
 			INDEX idx_shard_infos_shard_id (shard_id),
 			UNIQUE INDEX idx_shard_infos_instance_id (instance_id),
-			INDEX idx_shard_infos_last_heartbeat (last_heartbeat)
+			INDEX idx_shard_infos_last_heartbeat (last_heartbeat),
+			INDEX idx_shard_infos_status (status)
 		)`
 
 		if err := database.DB.Exec(shardInfosTableSQL).Error; err != nil {
-			return fmt.Errorf("failed to create shard_infos table: %w", err)
+			logger.Log.WithError(err).Error("Failed to create shard_infos table")
+			return false
 		}
 		logger.Log.Info("Created shard_infos table successfully")
+	}
+	return true
+}
+
+func (asm *AppShardManager) registerShard() error {
+	if !asm.ensureShardInfoTable() {
+		return fmt.Errorf("failed to ensure shard_infos table exists")
+	}
+
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
 	}
 
 	shardInfo := models.ShardInfo{
@@ -97,6 +149,9 @@ func (asm *AppShardManager) Initialize() error {
 		InstanceID:    asm.InstanceID,
 		LastHeartbeat: time.Now(),
 		Status:        "active",
+		StartupTime:   time.Now(),
+		ProcessID:     int64(os.Getpid()),
+		Hostname:      hostname,
 	}
 
 	if err := database.DB.Where("instance_id = ?", asm.InstanceID).
@@ -105,8 +160,8 @@ func (asm *AppShardManager) Initialize() error {
 		return fmt.Errorf("failed to register shard: %w", err)
 	}
 
-	logger.Log.Infof("Initialized application shard %d of %d with instance ID %s",
-		asm.ShardID, asm.TotalShards, asm.InstanceID)
+	logger.Log.Infof("Registered application shard %d of %d with instance ID %s on host %s (PID: %d)",
+		asm.ShardID, asm.TotalShards, asm.InstanceID, hostname, os.Getpid())
 
 	asm.Initialized = true
 	return nil
@@ -120,23 +175,29 @@ func (asm *AppShardManager) StartHeartbeat(ctx context.Context) {
 		}
 	}
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
+	rebalanceTicker := time.NewTicker(60 * time.Second)
+
 	go func() {
 		defer ticker.Stop()
+		defer rebalanceTicker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
+				asm.cleanup()
 				return
 			case <-ticker.C:
 				if err := asm.updateHeartbeat(); err != nil {
 					logger.Log.WithError(err).Error("Failed to update shard heartbeat")
 				}
-				asm.healShards()
+			case <-rebalanceTicker.C:
+				asm.performMaintenance()
 			}
 		}
 	}()
 
-	logger.Log.Info("Started application shard heartbeat")
+	logger.Log.Info("Started application shard heartbeat with maintenance")
 }
 
 func (asm *AppShardManager) updateHeartbeat() error {
@@ -145,20 +206,42 @@ func (asm *AppShardManager) updateHeartbeat() error {
 
 	asm.HeartbeatTime = time.Now()
 
-	return database.DB.Model(&models.ShardInfo{}).
+	result := database.DB.Model(&models.ShardInfo{}).
 		Where("instance_id = ?", asm.InstanceID).
 		Updates(map[string]interface{}{
 			"last_heartbeat": time.Now(),
 			"total_shards":   asm.TotalShards,
 			"status":         "active",
-		}).Error
+		})
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		logger.Log.Warn("Heartbeat update affected 0 rows, re-registering shard")
+		return asm.registerShard()
+	}
+
+	return nil
+}
+
+func (asm *AppShardManager) performMaintenance() {
+	if time.Since(asm.lastRebalance) < 30*time.Second {
+		return
+	}
+
+	asm.healShards()
+	asm.rebalanceShards()
+	asm.electLeader()
+	asm.lastRebalance = time.Now()
 }
 
 func (asm *AppShardManager) healShards() {
-	heartbeatTimeout := 2 * time.Minute
+	heartbeatTimeout := 90 * time.Second
 
 	var deadShards []models.ShardInfo
-	if err := database.DB.Where("last_heartbeat < ? AND status != 'inactive'",
+	if err := database.DB.Where("last_heartbeat < ? AND status = 'active'",
 		time.Now().Add(-heartbeatTimeout)).
 		Find(&deadShards).Error; err != nil {
 		logger.Log.WithError(err).Error("Failed to query for dead shards")
@@ -166,38 +249,133 @@ func (asm *AppShardManager) healShards() {
 	}
 
 	if len(deadShards) > 0 {
-		logger.Log.Infof("Found %d dead shards", len(deadShards))
-		for _, shard := range deadShards {
-			logger.Log.Infof("Marking shard %d (instance %s) as inactive (last heartbeat: %s)",
-				shard.ShardID, shard.InstanceID, shard.LastHeartbeat)
+		logger.Log.Infof("Found %d dead shards, marking as inactive", len(deadShards))
 
-			if err := database.DB.Model(&models.ShardInfo{}).
-				Where("instance_id = ?", shard.InstanceID).
-				Update("status", "inactive").Error; err != nil {
-				logger.Log.WithError(err).Error("Failed to mark shard as inactive")
-			}
+		var instanceIDs []string
+		for _, shard := range deadShards {
+			instanceIDs = append(instanceIDs, shard.InstanceID)
+			logger.Log.Infof("Marking shard %d (instance %s, host %s, PID %d) as inactive (last heartbeat: %s)",
+				shard.ShardID, shard.InstanceID, shard.Hostname, shard.ProcessID, shard.LastHeartbeat)
 		}
 
-		var activeShardCount int64
 		if err := database.DB.Model(&models.ShardInfo{}).
-			Where("status = 'active'").Count(&activeShardCount).Error; err != nil {
-			logger.Log.WithError(err).Error("Failed to count active shards")
+			Where("instance_id IN ?", instanceIDs).
+			Update("status", "inactive").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to mark dead shards as inactive")
+		}
+	}
+}
+
+func (asm *AppShardManager) rebalanceShards() {
+	var activeShards []models.ShardInfo
+	if err := database.DB.Where("status = 'active'").
+		Order("shard_id ASC").Find(&activeShards).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to query active shards for rebalancing")
+		return
+	}
+
+	if len(activeShards) == 0 {
+		logger.Log.Error("No active shards found during rebalancing")
+		return
+	}
+
+	needsRebalance := false
+	newTotalShards := len(activeShards)
+
+	for i, shard := range activeShards {
+		if shard.ShardID != i || shard.TotalShards != newTotalShards {
+			needsRebalance = true
+			break
+		}
+	}
+
+	if !needsRebalance {
+		if asm.TotalShards != newTotalShards {
+			asm.Lock()
+			asm.TotalShards = newTotalShards
+			asm.Unlock()
+			logger.Log.Infof("Updated local total shards to %d", newTotalShards)
+		}
+		return
+	}
+
+	logger.Log.Infof("Rebalancing %d active shards", len(activeShards))
+
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			logger.Log.Errorf("Panic during shard rebalancing: %v", r)
+		}
+	}()
+
+	for i, shard := range activeShards {
+		newShardID := i
+		if err := tx.Model(&models.ShardInfo{}).
+			Where("instance_id = ?", shard.InstanceID).
+			Updates(map[string]interface{}{
+				"shard_id":     newShardID,
+				"total_shards": newTotalShards,
+			}).Error; err != nil {
+			tx.Rollback()
+			logger.Log.WithError(err).Error("Failed to update shard during rebalancing")
 			return
 		}
 
-		if activeShardCount > 0 {
-			if err := database.DB.Model(&models.ShardInfo{}).
-				Where("status = 'active'").
-				Update("total_shards", activeShardCount).Error; err != nil {
-				logger.Log.WithError(err).Error("Failed to update total shards count")
-			}
-
+		if shard.InstanceID == asm.InstanceID {
 			asm.Lock()
-			asm.TotalShards = int(activeShardCount)
+			asm.ShardID = newShardID
+			asm.TotalShards = newTotalShards
 			asm.Unlock()
-
-			logger.Log.Infof("Updated total active shards to %d", activeShardCount)
+			logger.Log.Infof("Updated local shard assignment to %d of %d", newShardID, newTotalShards)
 		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to commit shard rebalancing transaction")
+		return
+	}
+
+	logger.Log.Infof("Successfully rebalanced shards: total active shards = %d", newTotalShards)
+}
+
+func (asm *AppShardManager) electLeader() {
+	var leader models.ShardInfo
+	if err := database.DB.Where("status = 'active'").
+		Order("startup_time ASC, instance_id ASC").
+		First(&leader).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to elect leader")
+		return
+	}
+
+	asm.Lock()
+	wasLeader := asm.isLeader
+	asm.isLeader = (leader.InstanceID == asm.InstanceID)
+	asm.Unlock()
+
+	if asm.isLeader && !wasLeader {
+		logger.Log.Infof("Elected as cluster leader (instance %s)", asm.InstanceID)
+	} else if !asm.isLeader && wasLeader {
+		logger.Log.Infof("No longer cluster leader, new leader is %s", leader.InstanceID)
+	}
+}
+
+func (asm *AppShardManager) IsLeader() bool {
+	asm.RLock()
+	defer asm.RUnlock()
+	return asm.isLeader
+}
+
+func (asm *AppShardManager) cleanup() {
+	asm.Lock()
+	defer asm.Unlock()
+
+	if err := database.DB.Model(&models.ShardInfo{}).
+		Where("instance_id = ?", asm.InstanceID).
+		Update("status", "shutdown").Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to mark shard as shutdown")
+	} else {
+		logger.Log.Info("Marked shard as shutdown in database")
 	}
 }
 
@@ -272,14 +450,9 @@ func generateInstanceID() string {
 	}
 
 	pid := os.Getpid()
+	timestamp := time.Now().UnixNano()
 
-	randBytes := make([]byte, 4)
-	for i := range randBytes {
-		randBytes[i] = byte(time.Now().Nanosecond() & 0xff)
-		time.Sleep(time.Nanosecond)
-	}
-
-	return fmt.Sprintf("%s-%d-%x", hostname, pid, randBytes)
+	return fmt.Sprintf("%s-%d-%d", hostname, pid, timestamp)
 }
 
 func (asm *AppShardManager) GetShardingStatus() map[string]interface{} {
@@ -291,6 +464,7 @@ func (asm *AppShardManager) GetShardingStatus() map[string]interface{} {
 		"total_shards":   asm.TotalShards,
 		"instance_id":    asm.InstanceID,
 		"initialized":    asm.Initialized,
+		"is_leader":      asm.isLeader,
 		"last_heartbeat": asm.HeartbeatTime,
 	}
 }

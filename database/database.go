@@ -144,6 +144,9 @@ func RunMigrations() {
 		if err := DB.Exec("ALTER TABLE analytics ADD COLUMN shard_id INT DEFAULT 0").Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to add shard_id column to Analytics table")
 		}
+		if err := DB.Exec("CREATE INDEX idx_analytics_shard_id ON analytics (shard_id)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to create shard_id index on Analytics table")
+		}
 	}
 
 	if !DB.Migrator().HasColumn(&models.Analytics{}, "instance_id") {
@@ -151,8 +154,36 @@ func RunMigrations() {
 		if err := DB.Exec("ALTER TABLE analytics ADD COLUMN instance_id VARCHAR(255) DEFAULT ''").Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to add instance_id column to Analytics table")
 		}
+		if err := DB.Exec("CREATE INDEX idx_analytics_instance_id ON analytics (instance_id)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to create instance_id index on Analytics table")
+		}
 	}
 
+	if !DB.Migrator().HasColumn(&models.ShardInfo{}, "startup_time") {
+		logger.Log.Info("Adding startup_time column to ShardInfo table")
+		if err := DB.Exec("ALTER TABLE shard_infos ADD COLUMN startup_time datetime(3)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add startup_time column to ShardInfo table")
+		}
+	}
+
+	if !DB.Migrator().HasColumn(&models.ShardInfo{}, "process_id") {
+		logger.Log.Info("Adding process_id column to ShardInfo table")
+		if err := DB.Exec("ALTER TABLE shard_infos ADD COLUMN process_id bigint").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add process_id column to ShardInfo table")
+		}
+	}
+
+	if !DB.Migrator().HasColumn(&models.ShardInfo{}, "hostname") {
+		logger.Log.Info("Adding hostname column to ShardInfo table")
+		if err := DB.Exec("ALTER TABLE shard_infos ADD COLUMN hostname varchar(255)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add hostname column to ShardInfo table")
+		}
+		if err := DB.Exec("CREATE INDEX idx_shard_infos_hostname ON shard_infos (hostname)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to create hostname index on ShardInfo table")
+		}
+	}
+
+	// Continue with existing migrations...
 	if !DB.Migrator().HasColumn(&models.Account{}, "game_specific_bans") {
 		logger.Log.Info("Adding game_specific_bans column to Account table")
 		if err := DB.Exec("ALTER TABLE accounts ADD COLUMN game_specific_bans JSON").Error; err != nil {
