@@ -148,9 +148,7 @@ func run() error {
 	logger.Log.Info("Proxy stats initialization completed")
 
 	appShardManager := services.GetAppShardManager()
-	if err := appShardManager.Initialize(); err != nil {
-		return fmt.Errorf("failed to initialize app shard manager: %w", err)
-	}
+	appShardManager.EnsureInitialized()
 
 	shardCtx, shardCancel := context.WithCancel(context.Background())
 	defer shardCancel()
@@ -159,9 +157,10 @@ func run() error {
 	logger.Log.Infof("Application shard %d of %d initialized successfully (Instance: %s)",
 		appShardManager.ShardID, appShardManager.TotalShards, appShardManager.InstanceID)
 
-	if appShardManager.IsLeader() {
+	cfg = configuration.Get()
+	if !cfg.Sharding.Enabled || appShardManager.IsLeader() {
 		services.StartAdminAPI()
-		logger.Log.Info("Started Admin API (leader shard)")
+		logger.Log.Info("Started Admin API")
 	} else {
 		logger.Log.Info("Skipping Admin API startup (not leader shard)")
 	}
@@ -183,20 +182,20 @@ func run() error {
 	go startPeriodicTasks(periodicTasksCtx, discord, appShardManager)
 
 	errorCleanupCtx, cancelErrorCleanup := context.WithCancel(ctx)
-	if appShardManager.IsLeader() {
+	if !cfg.Sharding.Enabled || appShardManager.IsLeader() {
 		go services.StartErrorCleanupRoutine(errorCleanupCtx)
-		logger.Log.Info("Started error cleanup routine (leader shard)")
+		logger.Log.Info("Started error cleanup routine")
 	}
 
 	edgeCaseCtx, cancelEdgeCase := context.WithCancel(ctx)
-	if appShardManager.IsLeader() {
+	if !cfg.Sharding.Enabled || appShardManager.IsLeader() {
 		go services.StartEdgeCaseCleanupRoutine(edgeCaseCtx)
-		logger.Log.Info("Started edge case cleanup routine (leader shard)")
+		logger.Log.Info("Started edge case cleanup routine")
 	}
 
-	if appShardManager.IsLeader() {
+	if !cfg.Sharding.Enabled || appShardManager.IsLeader() {
 		verdansk.InitCleanupRoutine()
-		logger.Log.Info("Initialized Verdansk cleanup routine (leader shard)")
+		logger.Log.Info("Initialized Verdansk cleanup routine")
 	}
 
 	logger.Log.Info("COD Status Bot startup complete")
@@ -277,7 +276,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 		}
 	}()
 
-	if shardManager.IsLeader() {
+	if !cfg.Sharding.Enabled || shardManager.IsLeader() {
 		go func() {
 			updateTicker := time.NewTicker(time.Hour)
 			defer updateTicker.Stop()
@@ -287,7 +286,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 				case <-ctx.Done():
 					return
 				case <-updateTicker.C:
-					logger.Log.Debug("Leader shard processing consolidated daily updates")
+					logger.Log.Debug("Processing consolidated daily updates")
 
 					var allUsers []models.UserSettings
 					if err := database.DB.Find(&allUsers).Error; err != nil {
@@ -296,7 +295,11 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 					}
 
 					users := services.FilterUserSettingsByShardAssignment(allUsers)
-					logger.Log.Debugf("Processing daily updates for %d users assigned to this shard (filtered from %d total)", len(users), len(allUsers))
+					if cfg.Sharding.Enabled && shardManager.TotalShards > 1 {
+						logger.Log.Debugf("Processing daily updates for %d users assigned to this shard (filtered from %d total)", len(users), len(allUsers))
+					} else {
+						logger.Log.Debugf("Processing daily updates for %d users (sharding disabled)", len(users))
+					}
 
 					processedUsers := 0
 					for _, user := range users {
@@ -304,9 +307,11 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 							continue
 						}
 
-						if !shardManager.IsUserAssignedToShard(user.UserID) {
-							logger.Log.Debugf("User %s no longer assigned to this shard, skipping", user.UserID)
-							continue
+						if cfg.Sharding.Enabled && shardManager.TotalShards > 1 {
+							if !shardManager.IsUserAssignedToShard(user.UserID) {
+								logger.Log.Debugf("User %s no longer assigned to this shard, skipping", user.UserID)
+								continue
+							}
 						}
 
 						var accounts []models.Account
@@ -322,7 +327,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 							processedUsers++
 						}
 					}
-					logger.Log.Debugf("Leader shard processed %d users for daily updates", processedUsers)
+					logger.Log.Debugf("Processed %d users for daily updates", processedUsers)
 				}
 			}
 		}()
@@ -355,7 +360,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 					return
 				case <-cleanupTicker.C:
 					services.CleanupOldRateLimitData()
-					logger.Log.Debug("Leader shard completed rate limit cleanup")
+					logger.Log.Debug("Completed rate limit cleanup")
 				}
 			}
 		}()
@@ -369,7 +374,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 				case <-ctx.Done():
 					return
 				case <-userCleanupTicker.C:
-					logger.Log.Info("Leader shard starting comprehensive cleanup")
+					logger.Log.Info("Starting comprehensive cleanup")
 
 					services.CleanupInactiveUsers()
 					logger.Log.Info("Completed inactive users cleanup")
@@ -381,7 +386,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 					logger.Log.Info("Completed shard info cleanup")
 
 					services.LogInstallationStats(s)
-					logger.Log.Info("Leader shard completed comprehensive cleanup")
+					logger.Log.Info("Completed comprehensive cleanup")
 				}
 			}
 		}()
@@ -395,7 +400,7 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 				case <-ctx.Done():
 					return
 				case <-analyticsTicker.C:
-					logger.Log.Info("Leader shard starting analytics cleanup")
+					logger.Log.Info("Starting analytics cleanup")
 					if err := services.CleanupOldAnalyticsData(cfg.Admin.RetentionDays); err != nil {
 						logger.Log.WithError(err).Error("Failed to clean up old analytics data")
 					} else {
@@ -429,8 +434,11 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 		}
 	}()
 
-	logger.Log.Infof("Shard %d periodic tasks started (leader: %v)",
-		shardManager.ShardID, shardManager.IsLeader())
+	if cfg.Sharding.Enabled {
+		logger.Log.Infof("Shard %d periodic tasks started (leader: %v)", shardManager.ShardID, shardManager.IsLeader())
+	} else {
+		logger.Log.Info("Periodic tasks started (sharding disabled)")
+	}
 }
 
 func startHealthCheckRoutine(s *discordgo.Session, shardManager *services.AppShardManager) {
@@ -441,6 +449,11 @@ func startHealthCheckRoutine(s *discordgo.Session, shardManager *services.AppSha
 	for range ticker.C {
 		healthy := true
 		issues := []string{}
+
+		if !shardManager.Initialized {
+			logger.Log.Warn("Shard manager not initialized during health check, attempting to initialize")
+			shardManager.EnsureInitialized()
+		}
 
 		if s.DataReady == false {
 			logger.Log.Errorf("Shard %d Discord connection is not ready", shardManager.ShardID)
@@ -455,9 +468,9 @@ func startHealthCheckRoutine(s *discordgo.Session, shardManager *services.AppSha
 		}
 
 		if !shardManager.Initialized {
-			logger.Log.Errorf("Shard %d manager is not initialized", shardManager.ShardID)
+			logger.Log.Errorf("Shard %d manager could not be initialized", shardManager.ShardID)
 			healthy = false
-			issues = append(issues, "Shard manager not initialized")
+			issues = append(issues, "Shard manager initialization failed")
 		}
 
 		if time.Now().Minute()%5 == 0 {

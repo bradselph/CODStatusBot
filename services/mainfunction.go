@@ -37,12 +37,8 @@ func InitializeServices() {
 func CheckAccounts(s *discordgo.Session) {
 	logger.Log.Info("Starting periodic account check")
 	shardMgr := GetAppShardManager()
-	if !shardMgr.Initialized {
-		if err := shardMgr.Initialize(); err != nil {
-			logger.Log.WithError(err).Error("Failed to initialize app shard manager")
-			return
-		}
-	}
+
+	shardMgr.EnsureInitialized()
 
 	shardMgr.RLock()
 	shardID := shardMgr.ShardID
@@ -74,8 +70,15 @@ func CheckAccounts(s *discordgo.Session) {
 		return
 	}
 
-	accounts = FilterAccountsByShardAssignment(accounts)
-	shardAccounts = int64(len(accounts))
+	cfg := configuration.Get()
+	if cfg.Sharding.Enabled && shardMgr.Initialized && shardMgr.TotalShards > 1 {
+		accounts = FilterAccountsByShardAssignment(accounts)
+		shardAccounts = int64(len(accounts))
+		logger.Log.Infof("Sharding enabled - filtering %d accounts to %d for shard %d", int(totalAccounts), len(accounts), shardMgr.ShardID)
+	} else {
+		shardAccounts = int64(len(accounts))
+		logger.Log.Infof("Sharding disabled or failed - processing all %d accounts", len(accounts))
+	}
 
 	logger.Log.Infof("Shard %d/%d - Account status summary: Total Global: %d, Shard Assigned: %d, Disabled: %d, Expired Cookies: %d",
 		shardID, totalShards, totalAccounts, shardAccounts, disabledAccounts, expiredCookieAccounts)
@@ -90,10 +93,12 @@ func CheckAccounts(s *discordgo.Session) {
 			continue
 		}
 
-		if !shardMgr.IsUserAssignedToShard(account.UserID) {
-			logger.Log.Debugf("Account %s (user %s) not assigned to this shard, skipping", account.Title, account.UserID)
-			skippedAccounts++
-			continue
+		if cfg.Sharding.Enabled && shardMgr.Initialized && shardMgr.TotalShards > 1 {
+			if !shardMgr.IsUserAssignedToShard(account.UserID) {
+				logger.Log.Debugf("Account %s (user %s) not assigned to this shard, skipping", account.Title, account.UserID)
+				skippedAccounts++
+				continue
+			}
 		}
 
 		accountsByUser[account.UserID] = append(accountsByUser[account.UserID], account)
@@ -105,17 +110,24 @@ func CheckAccounts(s *discordgo.Session) {
 	start := time.Now()
 
 	for userID, userAccounts := range accountsByUser {
-		err := shardMgr.SafeShardOperation(userID, func() error {
+		if cfg.Sharding.Enabled && shardMgr.Initialized && shardMgr.TotalShards > 1 {
+			err := shardMgr.SafeShardOperation(userID, func() error {
+				userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
+				successfulChecks += userSuccess
+				failedChecks += userFailed
+				processedCount++
+				return nil
+			})
+
+			if err != nil {
+				logger.Log.WithError(err).Warnf("Skipped processing user %s due to shard assignment validation", userID)
+				skippedAccounts += len(userAccounts)
+			}
+		} else {
 			userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
 			successfulChecks += userSuccess
 			failedChecks += userFailed
 			processedCount++
-			return nil
-		})
-
-		if err != nil {
-			logger.Log.WithError(err).Warnf("Skipped processing user %s due to shard assignment validation", userID)
-			skippedAccounts += len(userAccounts)
 		}
 	}
 
@@ -267,19 +279,37 @@ func LogNotification(userID string, accountID uint, notificationType string, suc
 }
 
 func updateShardStats(instanceID string, processedUsers, successfulChecks, failedChecks int, durationSec float64) error {
+	totalChecks := successfulChecks + failedChecks
+
+	var checkRate float64
+	if durationSec > 0 {
+		checkRate = float64(totalChecks) / durationSec
+	} else {
+		checkRate = 0
+	}
+
+	var successRate float64
+	if totalChecks > 0 {
+		successRate = float64(successfulChecks) / float64(totalChecks) * 100
+	} else {
+		successRate = 0
+	}
+
 	stats := map[string]interface{}{
 		"last_check_time":   time.Now(),
 		"processed_users":   processedUsers,
 		"successful_checks": successfulChecks,
 		"failed_checks":     failedChecks,
 		"duration_sec":      durationSec,
-		"check_rate":        float64(successfulChecks+failedChecks) / durationSec,
-		"success_rate":      float64(successfulChecks) / float64(successfulChecks+failedChecks) * 100,
+		"check_rate":        checkRate,
+		"success_rate":      successRate,
 	}
+
 	statJSON, err := json.Marshal(stats)
 	if err != nil {
 		return err
 	}
+
 	return database.DB.Model(&models.ShardInfo{}).
 		Where("instance_id = ?", instanceID).
 		Update("stats", string(statJSON)).Error

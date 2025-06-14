@@ -41,11 +41,42 @@ func GetAppShardManager() *AppShardManager {
 	return appShardManager
 }
 
+func (asm *AppShardManager) FallbackToSingleShard() {
+	asm.Lock()
+	defer asm.Unlock()
+
+	logger.Log.Warn("Falling back to single shard mode for maximum availability")
+	asm.ShardID = 0
+	asm.TotalShards = 1
+	asm.Initialized = true
+	asm.isLeader = true
+	asm.rebalancing = false
+}
+
+func (asm *AppShardManager) EnsureInitialized() {
+	if !asm.Initialized {
+		if err := asm.Initialize(); err != nil {
+			logger.Log.WithError(err).Warn("Shard manager initialization failed, using fallback mode")
+			asm.FallbackToSingleShard()
+		}
+	}
+}
+
 func (asm *AppShardManager) Initialize() error {
 	asm.Lock()
 	defer asm.Unlock()
 
 	if asm.Initialized {
+		return nil
+	}
+
+	shardingEnabled := os.Getenv("SHARDING_ENABLED")
+	if shardingEnabled == "false" || shardingEnabled == "" {
+		logger.Log.Info("Sharding disabled, initializing as single shard")
+		asm.ShardID = 0
+		asm.TotalShards = 1
+		asm.Initialized = true
+		asm.isLeader = true
 		return nil
 	}
 
@@ -78,15 +109,23 @@ func (asm *AppShardManager) Initialize() error {
 
 func (asm *AppShardManager) initializeAutoShard() error {
 	if !asm.ensureShardInfoTable() {
-		return fmt.Errorf("failed to ensure shard_infos table exists")
+		logger.Log.Warn("Failed to ensure shard_infos table, falling back to single shard mode")
+		asm.ShardID = 0
+		asm.TotalShards = 1
+		asm.Initialized = true
+		asm.isLeader = true
+		return nil
 	}
 
 	var activeShards []models.ShardInfo
 	if err := database.DB.Where("status = 'active' AND last_heartbeat > ?",
 		time.Now().Add(-2*time.Minute)).Find(&activeShards).Error; err != nil {
-		logger.Log.WithError(err).Error("Failed to query active shards")
+		logger.Log.WithError(err).Warn("Failed to query active shards, using single shard mode")
 		asm.ShardID = 0
 		asm.TotalShards = 1
+		asm.Initialized = true
+		asm.isLeader = true
+		return nil
 	} else {
 		asm.ShardID = len(activeShards)
 		asm.TotalShards = len(activeShards) + 1
@@ -137,7 +176,10 @@ func (asm *AppShardManager) ensureShardInfoTable() bool {
 
 func (asm *AppShardManager) registerShard() error {
 	if !asm.ensureShardInfoTable() {
-		return fmt.Errorf("failed to ensure shard_infos table exists")
+		logger.Log.Warn("Failed to ensure shard_infos table during registration, continuing without database tracking")
+		asm.Initialized = true
+		asm.isLeader = true
+		return nil
 	}
 
 	hostname, _ := os.Hostname()
@@ -159,7 +201,10 @@ func (asm *AppShardManager) registerShard() error {
 	if err := database.DB.Where("instance_id = ?", asm.InstanceID).
 		Assign(shardInfo).
 		FirstOrCreate(&shardInfo).Error; err != nil {
-		return fmt.Errorf("failed to register shard: %w", err)
+		logger.Log.WithError(err).Warn("Failed to register shard in database, continuing without database tracking")
+		asm.Initialized = true
+		asm.isLeader = true
+		return nil
 	}
 
 	logger.Log.Infof("Registered application shard %d of %d with instance ID %s on host %s (PID: %d)",
@@ -581,7 +626,7 @@ func FilterAccountsByShardAssignment(accounts []models.Account) []models.Account
 
 	shardManager := GetAppShardManager()
 
-	if shardManager.TotalShards <= 1 {
+	if !shardManager.Initialized || shardManager.TotalShards <= 1 {
 		return accounts
 	}
 
@@ -603,7 +648,7 @@ func FilterUserSettingsByShardAssignment(settings []models.UserSettings) []model
 
 	shardManager := GetAppShardManager()
 
-	if shardManager.TotalShards <= 1 {
+	if !shardManager.Initialized || shardManager.TotalShards <= 1 {
 		return settings
 	}
 

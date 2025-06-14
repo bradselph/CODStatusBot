@@ -11,6 +11,30 @@ import (
 	"github.com/bradselph/CODStatusBot/logger"
 )
 
+/*
+	func FormatDuration(duration time.Duration) string {
+		if duration <= 0 {
+			return "Expired"
+		}
+
+		if duration < 2*time.Hour {
+			minutes := int(duration.Minutes())
+			if minutes <= 0 {
+				return "Less than 1 minute"
+			}
+			return fmt.Sprintf("%d minutes", minutes)
+		}
+
+		days := int(duration.Hours() / 24)
+		hours := int(duration.Hours()) % 24
+
+		if days > 0 {
+			return fmt.Sprintf("%d days, %d hours", days, hours)
+		} else {
+			return fmt.Sprintf("%d hours", hours)
+		}
+	}
+*/
 func DecodeSSOCookie(encodedStr string) (int64, error) {
 	encodedStr = strings.TrimSpace(encodedStr)
 	padding := len(encodedStr) % 4
@@ -56,7 +80,7 @@ func CheckSSOCookieExpiration(expirationTimestamp int64) (time.Duration, error) 
 		return 0, fmt.Errorf("cookie has expired")
 	}
 
-	maxDuration := 14 * 24 * time.Hour // 14 days
+	maxDuration := 14 * 24 * time.Hour
 	if timeUntilExpiration > maxDuration {
 		return maxDuration, nil
 	}
@@ -73,7 +97,15 @@ func FormatExpirationTime(expirationTimestamp int64) string {
 		return "Expired"
 	}
 
-	maxDuration := 14 * 24 * time.Hour // 14 days
+	if timeUntilExpiration < 2*time.Hour {
+		minutes := int(timeUntilExpiration.Minutes())
+		if minutes <= 0 {
+			return "Less than 1 minute"
+		}
+		return fmt.Sprintf("%d minutes", minutes)
+	}
+
+	maxDuration := 14 * 24 * time.Hour
 	if timeUntilExpiration > maxDuration {
 		timeUntilExpiration = maxDuration
 	}

@@ -76,14 +76,16 @@ func StartBot() (*discordgo.Session, error) {
 		}
 
 		appShardManager := services.GetAppShardManager()
-		if !appShardManager.Initialized {
-			logger.Log.Debug("App shard manager not initialized, processing interaction")
-		} else {
+		cfg := configuration.Get()
+
+		if cfg.Sharding.Enabled && appShardManager.Initialized && appShardManager.TotalShards > 1 {
 			shouldProcess, reason := shouldProcessInteraction(appShardManager, i)
 			if !shouldProcess {
-				logger.Log.Debugf("Skipping interaction: %s", reason)
+				logger.Log.Debugf("Skipping interaction due to shard assignment: %s", reason)
 				return
 			}
+		} else {
+			logger.Log.Debug("Processing interaction (sharding disabled or failed)")
 		}
 
 		installationType := getInstallationType(i)
@@ -115,10 +117,12 @@ func StartBot() (*discordgo.Session, error) {
 		}
 
 		appShardManager := services.GetAppShardManager()
-		if appShardManager.Initialized {
+		cfg := configuration.Get()
+
+		if cfg.Sharding.Enabled && appShardManager.Initialized && appShardManager.TotalShards > 1 {
 			shouldProcess, reason := shouldProcessMessage(appShardManager, m)
 			if !shouldProcess {
-				logger.Log.Debugf("Skipping message: %s", reason)
+				logger.Log.Debugf("Skipping message due to shard assignment: %s", reason)
 				return
 			}
 		}
