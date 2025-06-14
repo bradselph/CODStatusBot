@@ -24,6 +24,7 @@ type AppShardManager struct {
 	Initialized   bool
 	isLeader      bool
 	lastRebalance time.Time
+	rebalancing   bool
 }
 
 var appShardManager *AppShardManager
@@ -34,6 +35,7 @@ func GetAppShardManager() *AppShardManager {
 			InstanceID:    generateInstanceID(),
 			Initialized:   false,
 			lastRebalance: time.Now(),
+			rebalancing:   false,
 		}
 	}
 	return appShardManager
@@ -231,10 +233,24 @@ func (asm *AppShardManager) performMaintenance() {
 		return
 	}
 
+	asm.Lock()
+	if asm.rebalancing {
+		asm.Unlock()
+		return
+	}
+	asm.rebalancing = true
+	asm.Unlock()
+
+	defer func() {
+		asm.Lock()
+		asm.rebalancing = false
+		asm.lastRebalance = time.Now()
+		asm.Unlock()
+	}()
+
 	asm.healShards()
 	asm.rebalanceShards()
 	asm.electLeader()
-	asm.lastRebalance = time.Now()
 }
 
 func (asm *AppShardManager) healShards() {
@@ -380,6 +396,11 @@ func (asm *AppShardManager) cleanup() {
 }
 
 func (asm *AppShardManager) GuildBelongsToInstance(guildID string) bool {
+	if guildID == "" {
+		logger.Log.Debug("Empty guildID provided to GuildBelongsToInstance")
+		return false
+	}
+
 	asm.RLock()
 	defer asm.RUnlock()
 
@@ -398,6 +419,11 @@ func (asm *AppShardManager) GuildBelongsToInstance(guildID string) bool {
 }
 
 func (asm *AppShardManager) GetGuildShardID(guildID string) int {
+	if guildID == "" {
+		logger.Log.Debug("Empty guildID provided to GetGuildShardID")
+		return -1
+	}
+
 	asm.RLock()
 	defer asm.RUnlock()
 
@@ -415,6 +441,11 @@ func (asm *AppShardManager) GetGuildShardID(guildID string) int {
 }
 
 func (asm *AppShardManager) ShardBelongsToInstance(userID string) bool {
+	if userID == "" {
+		logger.Log.Debug("Empty userID provided to ShardBelongsToInstance")
+		return false
+	}
+
 	asm.RLock()
 	defer asm.RUnlock()
 
@@ -427,12 +458,21 @@ func (asm *AppShardManager) ShardBelongsToInstance(userID string) bool {
 }
 
 func getUserShard(userID string, totalShards int) int {
+	if userID == "" || totalShards <= 1 {
+		return 0
+	}
+
 	hash := sha256.Sum256([]byte(userID))
 	val := binary.BigEndian.Uint64(hash[:8])
 	return int(val % uint64(totalShards))
 }
 
 func (asm *AppShardManager) GetUserShardID(userID string) int {
+	if userID == "" {
+		logger.Log.Debug("Empty userID provided to GetUserShardID")
+		return -1
+	}
+
 	asm.RLock()
 	defer asm.RUnlock()
 
@@ -466,10 +506,15 @@ func (asm *AppShardManager) GetShardingStatus() map[string]interface{} {
 		"initialized":    asm.Initialized,
 		"is_leader":      asm.isLeader,
 		"last_heartbeat": asm.HeartbeatTime,
+		"rebalancing":    asm.rebalancing,
 	}
 }
 
 func (asm *AppShardManager) FilterUsersByShardAssignment(userIDs []string) []string {
+	if len(userIDs) == 0 {
+		return userIDs
+	}
+
 	asm.RLock()
 	defer asm.RUnlock()
 
@@ -479,7 +524,7 @@ func (asm *AppShardManager) FilterUsersByShardAssignment(userIDs []string) []str
 
 	var assignedUsers []string
 	for _, userID := range userIDs {
-		if getUserShard(userID, asm.TotalShards) == asm.ShardID {
+		if userID != "" && getUserShard(userID, asm.TotalShards) == asm.ShardID {
 			assignedUsers = append(assignedUsers, userID)
 		}
 	}
@@ -488,6 +533,11 @@ func (asm *AppShardManager) FilterUsersByShardAssignment(userIDs []string) []str
 }
 
 func (asm *AppShardManager) IsUserAssignedToShard(userID string) bool {
+	if userID == "" {
+		logger.Log.Debug("Empty userID provided to IsUserAssignedToShard")
+		return false
+	}
+
 	asm.RLock()
 	defer asm.RUnlock()
 
@@ -516,7 +566,7 @@ func (asm *AppShardManager) GetShardedUserCount() (int64, error) {
 
 	var count int64
 	for _, userID := range userIDs {
-		if getUserShard(userID, asm.TotalShards) == asm.ShardID {
+		if userID != "" && getUserShard(userID, asm.TotalShards) == asm.ShardID {
 			count++
 		}
 	}
@@ -525,6 +575,10 @@ func (asm *AppShardManager) GetShardedUserCount() (int64, error) {
 }
 
 func FilterAccountsByShardAssignment(accounts []models.Account) []models.Account {
+	if len(accounts) == 0 {
+		return accounts
+	}
+
 	shardManager := GetAppShardManager()
 
 	if shardManager.TotalShards <= 1 {
@@ -533,15 +587,20 @@ func FilterAccountsByShardAssignment(accounts []models.Account) []models.Account
 
 	var filteredAccounts []models.Account
 	for _, account := range accounts {
-		if shardManager.IsUserAssignedToShard(account.UserID) {
+		if account.UserID != "" && shardManager.IsUserAssignedToShard(account.UserID) {
 			filteredAccounts = append(filteredAccounts, account)
 		}
 	}
 
+	logger.Log.Debugf("Filtered %d accounts down to %d for shard %d", len(accounts), len(filteredAccounts), shardManager.ShardID)
 	return filteredAccounts
 }
 
 func FilterUserSettingsByShardAssignment(settings []models.UserSettings) []models.UserSettings {
+	if len(settings) == 0 {
+		return settings
+	}
+
 	shardManager := GetAppShardManager()
 
 	if shardManager.TotalShards <= 1 {
@@ -550,10 +609,46 @@ func FilterUserSettingsByShardAssignment(settings []models.UserSettings) []model
 
 	var filteredSettings []models.UserSettings
 	for _, setting := range settings {
-		if shardManager.IsUserAssignedToShard(setting.UserID) {
+		if setting.UserID != "" && shardManager.IsUserAssignedToShard(setting.UserID) {
 			filteredSettings = append(filteredSettings, setting)
 		}
 	}
 
+	logger.Log.Debugf("Filtered %d user settings down to %d for shard %d", len(settings), len(filteredSettings), shardManager.ShardID)
 	return filteredSettings
+}
+
+func (asm *AppShardManager) SafeShardOperation(userID string, operation func() error) error {
+	if userID == "" {
+		return fmt.Errorf("empty userID provided for shard operation")
+	}
+
+	if !asm.IsUserAssignedToShard(userID) {
+		assignedShard := asm.GetUserShardID(userID)
+		return fmt.Errorf("user %s assigned to shard %d, current shard is %d", userID, assignedShard, asm.ShardID)
+	}
+
+	return operation()
+}
+
+func (asm *AppShardManager) GetAssignedUserIDs(userIDs []string) []string {
+	if len(userIDs) == 0 {
+		return userIDs
+	}
+
+	asm.RLock()
+	defer asm.RUnlock()
+
+	if asm.TotalShards <= 1 {
+		return userIDs
+	}
+
+	var assigned []string
+	for _, userID := range userIDs {
+		if userID != "" && getUserShard(userID, asm.TotalShards) == asm.ShardID {
+			assigned = append(assigned, userID)
+		}
+	}
+
+	return assigned
 }

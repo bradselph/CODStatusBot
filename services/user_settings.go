@@ -75,8 +75,18 @@ func initDefaultSettings() {
 }
 
 func GetUserSettings(userID string) (models.UserSettings, error) {
+	if userID == "" {
+		return models.UserSettings{}, fmt.Errorf("empty userID provided")
+	}
+
+	shardMgr := GetAppShardManager()
+	if shardMgr.Initialized && !shardMgr.IsUserAssignedToShard(userID) {
+		assignedShard := shardMgr.GetUserShardID(userID)
+		return models.UserSettings{}, fmt.Errorf("user %s assigned to shard %d, current shard is %d", userID, assignedShard, shardMgr.ShardID)
+	}
+
 	cfg := configuration.Get()
-	logger.Log.Infof("Getting user settings for user: %s", userID)
+	logger.Log.Debugf("Getting user settings for user: %s (shard %d)", userID, shardMgr.ShardID)
 
 	var settings models.UserSettings
 	result := database.DB.Where(models.UserSettings{UserID: userID}).FirstOrCreate(&settings)
@@ -170,6 +180,16 @@ func GetUserSettings(userID string) (models.UserSettings, error) {
 }
 
 func GetUserCaptchaKey(userID string) (string, float64, error) {
+	if userID == "" {
+		return "", 0, fmt.Errorf("empty userID provided")
+	}
+
+	shardMgr := GetAppShardManager()
+	if shardMgr.Initialized && !shardMgr.IsUserAssignedToShard(userID) {
+		assignedShard := shardMgr.GetUserShardID(userID)
+		return "", 0, fmt.Errorf("user %s assigned to shard %d, current shard is %d", userID, assignedShard, shardMgr.ShardID)
+	}
+
 	var settings models.UserSettings
 	result := database.DB.Where(models.UserSettings{UserID: userID}).First(&settings)
 	if result.Error != nil {
@@ -299,6 +319,16 @@ func GetUserCaptchaKey(userID string) (string, float64, error) {
 }
 
 func GetCaptchaSolver(userID string) (CaptchaSolver, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("empty userID provided")
+	}
+
+	shardMgr := GetAppShardManager()
+	if shardMgr.Initialized && !shardMgr.IsUserAssignedToShard(userID) {
+		assignedShard := shardMgr.GetUserShardID(userID)
+		return nil, fmt.Errorf("user %s assigned to shard %d, current shard is %d", userID, assignedShard, shardMgr.ShardID)
+	}
+
 	settings, err := GetUserSettings(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user settings: %w", err)
@@ -320,6 +350,16 @@ func GetDefaultSettings() (models.UserSettings, error) {
 }
 
 func RemoveCaptchaKey(userID string) error {
+	if userID == "" {
+		return fmt.Errorf("empty userID provided")
+	}
+
+	shardMgr := GetAppShardManager()
+	if shardMgr.Initialized && !shardMgr.IsUserAssignedToShard(userID) {
+		assignedShard := shardMgr.GetUserShardID(userID)
+		return fmt.Errorf("user %s assigned to shard %d, current shard is %d", userID, assignedShard, shardMgr.ShardID)
+	}
+
 	var settings models.UserSettings
 	result := database.DB.Where("user_id = ?", userID).First(&settings)
 	if result.Error != nil {

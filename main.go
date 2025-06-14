@@ -288,22 +288,31 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 					return
 				case <-updateTicker.C:
 					logger.Log.Debug("Leader shard processing consolidated daily updates")
-					var users []models.UserSettings
-					if err := database.DB.Find(&users).Error; err != nil {
+
+					var allUsers []models.UserSettings
+					if err := database.DB.Find(&allUsers).Error; err != nil {
 						logger.Log.WithError(err).Error("Failed to fetch users for consolidated updates")
 						continue
 					}
-					for _, user := range users {
-						if !shardManager.IsUserAssignedToShard(user.UserID) {
 
-							processedUsers := 0
+					users := services.FilterUserSettingsByShardAssignment(allUsers)
+					logger.Log.Debugf("Processing daily updates for %d users assigned to this shard (filtered from %d total)", len(users), len(allUsers))
+
+					processedUsers := 0
+					for _, user := range users {
+						if user.UserID == "" {
+							continue
+						}
+
+						if !shardManager.IsUserAssignedToShard(user.UserID) {
+							logger.Log.Debugf("User %s no longer assigned to this shard, skipping", user.UserID)
 							continue
 						}
 
 						var accounts []models.Account
 						if err := database.DB.Where("user_id = ? AND is_check_disabled = ? AND is_expired_cookie = ?",
 							user.UserID, false, false).Find(&accounts).Error; err != nil {
-							logger.Log.WithError(err).Error("Failed to fetch accounts for user")
+							logger.Log.WithError(err).Errorf("Failed to fetch accounts for user %s", user.UserID)
 							continue
 						}
 
@@ -360,9 +369,19 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 				case <-ctx.Done():
 					return
 				case <-userCleanupTicker.C:
+					logger.Log.Info("Leader shard starting comprehensive cleanup")
+
 					services.CleanupInactiveUsers()
-					logger.Log.Info("Leader shard completed inactive users cleanup")
+					logger.Log.Info("Completed inactive users cleanup")
+
+					services.CleanupUsersByShardAssignment()
+					logger.Log.Info("Completed shard assignment cleanup")
+
+					services.CleanupOldShardInfo()
+					logger.Log.Info("Completed shard info cleanup")
+
 					services.LogInstallationStats(s)
+					logger.Log.Info("Leader shard completed comprehensive cleanup")
 				}
 			}
 		}()
@@ -376,8 +395,18 @@ func startPeriodicTasks(ctx context.Context, s *discordgo.Session, shardManager 
 				case <-ctx.Done():
 					return
 				case <-analyticsTicker.C:
+					logger.Log.Info("Leader shard starting analytics cleanup")
 					if err := services.CleanupOldAnalyticsData(cfg.Admin.RetentionDays); err != nil {
 						logger.Log.WithError(err).Error("Failed to clean up old analytics data")
+					} else {
+						logger.Log.Info("Completed analytics data cleanup")
+					}
+
+					stats, err := services.ValidateUserShardAssignments()
+					if err != nil {
+						logger.Log.WithError(err).Error("Failed to validate user shard assignments")
+					} else {
+						logger.Log.Infof("Shard assignment validation: %+v", stats)
 					}
 				}
 			}
@@ -410,21 +439,42 @@ func startHealthCheckRoutine(s *discordgo.Session, shardManager *services.AppSha
 	defer ticker.Stop()
 
 	for range ticker.C {
+		healthy := true
+		issues := []string{}
+
 		if s.DataReady == false {
 			logger.Log.Errorf("Shard %d Discord connection is not ready", shardManager.ShardID)
-			continue
+			healthy = false
+			issues = append(issues, "Discord connection not ready")
 		}
 
 		if err := database.CheckConnection(); err != nil {
 			logger.Log.WithError(err).Errorf("Shard %d database health check failed", shardManager.ShardID)
-			continue
+			healthy = false
+			issues = append(issues, fmt.Sprintf("Database connection failed: %v", err))
 		}
 
 		if !shardManager.Initialized {
 			logger.Log.Errorf("Shard %d manager is not initialized", shardManager.ShardID)
-			continue
+			healthy = false
+			issues = append(issues, "Shard manager not initialized")
 		}
 
-		logger.Log.Debugf("Shard %d health check passed", shardManager.ShardID)
+		if time.Now().Minute()%5 == 0 {
+			services.PerformShardHealthCheck()
+		}
+
+		if healthy {
+			logger.Log.Debugf("Shard %d health check passed", shardManager.ShardID)
+		} else {
+			logger.Log.Errorf("Shard %d health check failed: %v", shardManager.ShardID, issues)
+
+			services.LogAnalyticsEvent("health_check_failed", "", "", "", "failed",
+				shardManager.ShardID, shardManager.InstanceID, map[string]interface{}{
+					"issues":            issues,
+					"discord_ready":     s.DataReady,
+					"shard_initialized": shardManager.Initialized,
+				})
+		}
 	}
 }

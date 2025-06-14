@@ -380,8 +380,15 @@ func CheckAccount(ssoCookie string, userID string, captchaAPIKey string) (models
 		logger.Log.WithError(err).Error("Failed to update account with game-specific bans")
 	}
 
-	LogAccountCheck(accountID, userID, "", err == nil,
-		captchaProvider, captchaCost, time.Since(startTime).Milliseconds())
+	LogAccountCheck(accountID, userID, err == nil, overallStatus,
+		time.Since(startTime).Milliseconds(), captchaProvider, captchaCost,
+		func() string {
+			if err != nil {
+				return err.Error()
+			} else {
+				return ""
+			}
+		}())
 
 	if accountID > 0 {
 		LogAccountStatusCheck(accountID, userID, overallStatus, "manual_check", "")
