@@ -64,6 +64,10 @@ func CleanupInactiveUsers() {
 		processedCount, archivedCount, errorCount)
 
 	cleanupOldUnreachableUsers(cfg)
+
+	if err := CleanupOldShadowbanPeriods(365); err != nil {
+		logger.Log.WithError(err).Error("Failed to cleanup old shadowban period data")
+	}
 }
 
 func cleanupOldUnreachableUsers(cfg *configuration.Config) {

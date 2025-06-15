@@ -46,10 +46,7 @@ func CommandUpdateAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		return
 	}
 
-	var (
-		components []discordgo.MessageComponent
-		currentRow []discordgo.MessageComponent
-	)
+	var components []discordgo.MessageComponent
 
 	for _, account := range accounts {
 		label := account.Title
@@ -59,30 +56,14 @@ func CommandUpdateAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 		if account.IsCheckDisabled {
 			label += " (Disabled)"
-			button := discordgo.Button{
-				Label:    label,
-				Style:    discordgo.SecondaryButton,
-				CustomID: fmt.Sprintf("update_account_%d", account.ID),
-			}
-			currentRow = append(currentRow, button)
+			button := services.CreateV2Button(label, fmt.Sprintf("update_account_%d", account.ID), discordgo.SecondaryButton)
+			components = append(components, button)
 		} else {
-			button := discordgo.Button{
-				Label:    label,
-				Style:    discordgo.PrimaryButton,
-				CustomID: fmt.Sprintf("update_account_%d", account.ID),
-			}
-			currentRow = append(currentRow, button)
-		}
-
-		if len(currentRow) == 5 {
-			components = append(components, discordgo.ActionsRow{Components: currentRow})
-			currentRow = []discordgo.MessageComponent{}
+			button := services.CreateV2Button(label, fmt.Sprintf("update_account_%d", account.ID), discordgo.PrimaryButton)
+			components = append(components, button)
 		}
 	}
 
-	if len(currentRow) > 0 {
-		components = append(components, discordgo.ActionsRow{Components: currentRow})
-	}
 	_, err = services.FollowupWithPreference(s, i, "Select an account to update:", nil, components, false)
 	if err != nil {
 		logger.Log.WithError(err).Error("Error sending followup with account selection")

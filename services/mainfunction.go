@@ -429,11 +429,17 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 			ban.AffectedGames = statusLog.AffectedGames
 		}
 
+		var banID uint
 		if err := database.DB.Create(&ban).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to create ban record")
 		} else {
+			banID = ban.ID
 			logger.Log.Infof("Shard %d - Created ban record for account %s: %s -> %s",
 				shardMgr.ShardID, account.Title, previousStatus, newStatus)
+		}
+
+		if err := TrackShadowbanTransition(account.ID, account.UserID, previousStatus, newStatus, banID); err != nil {
+			logger.Log.WithError(err).Error("Failed to track shadowban transition")
 		}
 
 		LogStatusChange(account.ID, account.UserID, newStatus, previousStatus)

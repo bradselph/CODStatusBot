@@ -1,6 +1,7 @@
 package command
 
 import (
+	"strings"
 	"time"
 
 	"github.com/bradselph/CODStatusBot/command/accountage"
@@ -18,6 +19,7 @@ import (
 	"github.com/bradselph/CODStatusBot/command/setcheckinterval"
 	"github.com/bradselph/CODStatusBot/command/setephemeral"
 	"github.com/bradselph/CODStatusBot/command/setnotifications"
+	"github.com/bradselph/CODStatusBot/command/shadowbansta
 	"github.com/bradselph/CODStatusBot/command/togglecheck"
 	"github.com/bradselph/CODStatusBot/command/updateaccount"
 	"github.com/bradselph/CODStatusBot/command/verdansk"
@@ -134,6 +136,7 @@ func RegisterCommands(s *discordgo.Session) error {
 			Description:  "Get your Verdansk Replay stats and images",
 			DMPermission: BoolPtr(true),
 		},
+		shadowbanstats.GetShadowbanStatsCommand(),
 	}
 
 	Handlers["set_captcha_service_modal_capsolver"] = setcaptchaservice.HandleModalSubmit
@@ -172,6 +175,7 @@ func RegisterCommands(s *discordgo.Session) error {
 	Handlers["setnotifications"] = setnotifications.CommandSetNotifications
 	Handlers["setephemeral"] = setephemeral.CommandSetEphemeral
 	Handlers["verdansk"] = verdansk.CommandVerdansk
+	Handlers["shadowbanstats"] = shadowbanstats.CommandShadowbanStats
 
 	Handlers["set_notifications_modal"] = setnotifications.HandleModalSubmit
 	Handlers["setcaptchaservice_modal"] = setcaptchaservice.HandleModalSubmit
@@ -185,6 +189,7 @@ func RegisterCommands(s *discordgo.Session) error {
 	Handlers["remove_account"] = removeaccount.HandleAccountSelection
 	Handlers["check_now"] = checknow.HandleAccountSelection
 	Handlers["toggle_check"] = togglecheck.HandleAccountSelection
+	Handlers["update_account"] = updateaccount.HandleAccountSelection
 	Handlers["feedback_anonymous"] = feedback.HandleFeedbackChoice
 	Handlers["feedback_with_id"] = feedback.HandleFeedbackChoice
 	Handlers["set_ephemeral_enable"] = setephemeral.HandleEphemeralSelection
@@ -219,6 +224,13 @@ func HandleCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		commandName = i.ApplicationCommandData().Name
 	} else if i.MessageComponentData().CustomID != "" {
 		commandName = i.MessageComponentData().CustomID
+	}
+
+	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
+		if commandName == "shadowbanstats" {
+			shadowbanstats.HandleShadowbanStatsAutocomplete(s, i)
+			return
+		}
 	}
 
 	if i.Member != nil {
@@ -265,9 +277,36 @@ func HandleCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	} else if h, ok := Handlers[i.MessageComponentData().CustomID]; ok {
 		h(s, i)
 	} else {
-		logger.Log.Warnf("Unhandled interaction: %s", i.Type)
-		errorDetails = "Unhandled interaction type"
-		success = false
+		customID := i.MessageComponentData().CustomID
+		handled := false
+
+		prefixes := []string{
+			"update_account_",
+			"remove_account_",
+			"check_now_",
+			"toggle_check_",
+			"account_age_",
+			"account_logs_",
+			"verdansk_account_",
+			"update_account_modal_",
+		}
+
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(customID, prefix) {
+				handlerKey := strings.TrimSuffix(prefix, "_")
+				if h, ok := Handlers[handlerKey]; ok {
+					h(s, i)
+					handled = true
+					break
+				}
+			}
+		}
+
+		if !handled {
+			logger.Log.Warnf("Unhandled interaction: %s with customID: %s", i.Type, customID)
+			errorDetails = "Unhandled interaction type"
+			success = false
+		}
 	}
 
 	services.LogCommandExecution(commandName, userID, i.GuildID, success,

@@ -137,6 +137,10 @@ func CleanupInvalidTimestamps() {
 func RunMigrations() {
 	logger.Log.Info("Running migrations")
 
+	if err := createShadowbanPeriodsTable(); err != nil {
+		logger.Log.WithError(err).Error("Failed to create shadowban_periods table")
+	}
+
 	CleanupInvalidTimestamps()
 
 	if !DB.Migrator().HasColumn(&models.Analytics{}, "shard_id") {
@@ -280,7 +284,6 @@ func RunMigrations() {
 		}
 	}
 
-	// Initialize JSON fields
 	if err := DB.Exec("UPDATE accounts SET game_specific_bans = '{}' WHERE game_specific_bans IS NULL OR game_specific_bans = ''").Error; err != nil {
 		logger.Log.WithError(err).Error("Failed to initialize game_specific_bans")
 	}
@@ -407,4 +410,36 @@ func MigrateFallbackDefaults() {
 			logger.Log.Infof("Successfully migrated %d users to default fallback setting", result.RowsAffected)
 		}
 	}
+}
+
+func createShadowbanPeriodsTable() error {
+	sql := `
+	CREATE TABLE IF NOT EXISTS shadowban_periods (
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		account_id BIGINT NOT NULL,
+		user_id VARCHAR(255) NOT NULL,
+		account_title VARCHAR(255) NOT NULL,
+		start_time DATETIME(3) NOT NULL,
+		end_time DATETIME(3) NULL,
+		duration_hours DOUBLE NULL,
+		is_completed BOOLEAN NOT NULL DEFAULT FALSE,
+		start_ban_id BIGINT NOT NULL,
+		end_ban_id BIGINT NULL,
+		created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+		updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+		INDEX idx_account_id (account_id),
+		INDEX idx_user_id (user_id),
+		INDEX idx_created_at (created_at),
+		INDEX idx_is_completed (is_completed),
+		INDEX idx_start_time (start_time),
+		INDEX idx_end_time (end_time)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+
+	if err := DB.Exec(sql).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to create shadowban_periods table")
+		return err
+	}
+
+	logger.Log.Info("Successfully created or verified shadowban_periods table")
+	return nil
 }
