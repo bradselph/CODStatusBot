@@ -19,7 +19,7 @@ import (
 	"github.com/bradselph/CODStatusBot/command/setcheckinterval"
 	"github.com/bradselph/CODStatusBot/command/setephemeral"
 	"github.com/bradselph/CODStatusBot/command/setnotifications"
-	"github.com/bradselph/CODStatusBot/command/shadowbansta
+	"github.com/bradselph/CODStatusBot/command/shadowbanstats"
 	"github.com/bradselph/CODStatusBot/command/togglecheck"
 	"github.com/bradselph/CODStatusBot/command/updateaccount"
 	"github.com/bradselph/CODStatusBot/command/verdansk"
