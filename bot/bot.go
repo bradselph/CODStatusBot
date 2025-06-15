@@ -2,6 +2,7 @@ package bot
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/bradselph/CODStatusBot/command"
@@ -75,31 +76,30 @@ func StartBot() (*discordgo.Session, error) {
 		}
 
 		appShardManager := services.GetAppShardManager()
-		if !appShardManager.Initialized {
-			logger.Log.Debug("App shard manager not initialized, processing interaction")
-		} else {
-			if i.GuildID != "" {
-				if !appShardManager.GuildBelongsToInstance(i.GuildID) {
-					assignedShard := appShardManager.GetGuildShardID(i.GuildID)
-					logger.Log.Debugf("Skipping interaction in guild %s (assigned to shard %d, this is shard %d)",
-						i.GuildID, assignedShard, appShardManager.ShardID)
-					return
-				}
-			} else {
-				userID := getUserIDFromInteraction(i)
-				if userID != "" {
-					if !appShardManager.ShardBelongsToInstance(userID) {
-						assignedShard := appShardManager.GetUserShardID(userID)
-						logger.Log.Debugf("Skipping direct message interaction from user %s (assigned to shard %d, this is shard %d)",
-							userID, assignedShard, appShardManager.ShardID)
-						return
-					}
-				}
+		cfg := configuration.Get()
+
+		if cfg.Sharding.Enabled && appShardManager.Initialized && appShardManager.TotalShards > 1 {
+			shouldProcess, reason := shouldProcessInteraction(appShardManager, i)
+			if !shouldProcess {
+				logger.Log.Debugf("Skipping interaction due to shard assignment: %s", reason)
+				return
 			}
+		} else {
+			logger.Log.Debug("Processing interaction (sharding disabled or failed)")
 		}
 
 		installationType := getInstallationType(i)
-		logger.Log.Infof("Handling interaction in context: %s", installationType)
+		userID := getUserIDFromInteraction(i)
+
+		logger.Log.Infof("Shard %d processing interaction in context: %s for user: %s",
+			appShardManager.ShardID, installationType, userID)
+
+		services.LogAnalyticsEvent("interaction_received", userID, i.GuildID, "", "",
+			appShardManager.ShardID, appShardManager.InstanceID, map[string]interface{}{
+				"interaction_type":  i.Type.String(),
+				"command_name":      getCommandName(i),
+				"installation_type": installationType,
+			})
 
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
@@ -117,31 +117,84 @@ func StartBot() (*discordgo.Session, error) {
 		}
 
 		appShardManager := services.GetAppShardManager()
-		if appShardManager.Initialized {
-			if m.GuildID != "" {
-				if !appShardManager.GuildBelongsToInstance(m.GuildID) {
-					assignedShard := appShardManager.GetGuildShardID(m.GuildID)
-					logger.Log.Debugf("Skipping message in guild %s (assigned to shard %d, this is shard %d)",
-						m.GuildID, assignedShard, appShardManager.ShardID)
-					return
-				}
-			} else {
-				if !appShardManager.ShardBelongsToInstance(m.Author.ID) {
-					assignedShard := appShardManager.GetUserShardID(m.Author.ID)
-					logger.Log.Debugf("Skipping direct message from user %s (assigned to shard %d, this is shard %d)",
-						m.Author.ID, assignedShard, appShardManager.ShardID)
-					return
-				}
+		cfg := configuration.Get()
+
+		if cfg.Sharding.Enabled && appShardManager.Initialized && appShardManager.TotalShards > 1 {
+			shouldProcess, reason := shouldProcessMessage(appShardManager, m)
+			if !shouldProcess {
+				logger.Log.Debugf("Skipping message due to shard assignment: %s", reason)
+				return
 			}
 		}
 
 		channel, err := s.Channel(m.ChannelID)
 		if err == nil && channel.Type == discordgo.ChannelTypeDM {
-			logger.Log.Infof("Received DM from user %s: %s", m.Author.Username, m.Content)
+			logger.Log.Infof("Shard %d received DM from user %s: %s",
+				appShardManager.ShardID, m.Author.Username, m.Content)
 		}
 	})
 
+	discord.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
+		appShardManager := services.GetAppShardManager()
+		logger.Log.Infof("Shard %d/%d Discord session ready with %d guilds",
+			appShardManager.ShardID, appShardManager.TotalShards, len(r.Guilds))
+
+		services.LogAnalyticsEvent("shard_ready", "", "", "", "",
+			appShardManager.ShardID, appShardManager.InstanceID, map[string]interface{}{
+				"guild_count": len(r.Guilds),
+				"session_id":  r.SessionID,
+			})
+	})
+
+	discord.AddHandler(func(s *discordgo.Session, d *discordgo.Disconnect) {
+		appShardManager := services.GetAppShardManager()
+		logger.Log.Warnf("Shard %d/%d disconnected from Discord",
+			appShardManager.ShardID, appShardManager.TotalShards)
+
+		services.LogAnalyticsEvent("shard_disconnect", "", "", "", "",
+			appShardManager.ShardID, appShardManager.InstanceID, map[string]interface{}{
+				"disconnect_reason": "discord_disconnect_event",
+			})
+	})
+
 	return discord, nil
+}
+
+func shouldProcessInteraction(shardManager *services.AppShardManager, i *discordgo.InteractionCreate) (bool, string) {
+	if i.GuildID != "" {
+		if !shardManager.GuildBelongsToInstance(i.GuildID) {
+			assignedShard := shardManager.GetGuildShardID(i.GuildID)
+			return false, fmt.Sprintf("guild %s assigned to shard %d, this is shard %d",
+				i.GuildID, assignedShard, shardManager.ShardID)
+		}
+	} else {
+		userID := getUserIDFromInteraction(i)
+		if userID != "" {
+			if !shardManager.ShardBelongsToInstance(userID) {
+				assignedShard := shardManager.GetUserShardID(userID)
+				return false, fmt.Sprintf("user %s assigned to shard %d, this is shard %d",
+					userID, assignedShard, shardManager.ShardID)
+			}
+		}
+	}
+	return true, ""
+}
+
+func shouldProcessMessage(shardManager *services.AppShardManager, m *discordgo.MessageCreate) (bool, string) {
+	if m.GuildID != "" {
+		if !shardManager.GuildBelongsToInstance(m.GuildID) {
+			assignedShard := shardManager.GetGuildShardID(m.GuildID)
+			return false, fmt.Sprintf("guild %s assigned to shard %d, this is shard %d",
+				m.GuildID, assignedShard, shardManager.ShardID)
+		}
+	} else {
+		if !shardManager.ShardBelongsToInstance(m.Author.ID) {
+			assignedShard := shardManager.GetUserShardID(m.Author.ID)
+			return false, fmt.Sprintf("user %s assigned to shard %d, this is shard %d",
+				m.Author.ID, assignedShard, shardManager.ShardID)
+		}
+	}
+	return true, ""
 }
 
 func getInstallationType(i *discordgo.InteractionCreate) string {
@@ -161,11 +214,28 @@ func getUserIDFromInteraction(i *discordgo.InteractionCreate) string {
 	return userID
 }
 
+func getCommandName(i *discordgo.InteractionCreate) string {
+	switch i.Type {
+	case discordgo.InteractionApplicationCommand:
+		return i.ApplicationCommandData().Name
+	case discordgo.InteractionModalSubmit:
+		return i.ModalSubmitData().CustomID
+	case discordgo.InteractionMessageComponent:
+		return i.MessageComponentData().CustomID
+	default:
+		return "unknown"
+	}
+}
+
 func handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	defer services.RecoverFromPanic("handleModalSubmit")
 
 	customID := i.ModalSubmitData().CustomID
-	logger.Log.WithField("customID", customID).Debug("Handling modal submit")
+	userID := getUserIDFromInteraction(i)
+	appShardManager := services.GetAppShardManager()
+
+	logger.Log.Debugf("Shard %d handling modal submit %s for user %s",
+		appShardManager.ShardID, customID, userID)
 
 	switch {
 	case strings.HasPrefix(customID, "set_notifications_modal_"):
@@ -197,7 +267,11 @@ func handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate
 	defer services.RecoverFromPanic("handleMessageComponent")
 
 	customID := i.MessageComponentData().CustomID
-	logger.Log.WithField("customID", customID).Debug("Handling message component")
+	userID := getUserIDFromInteraction(i)
+	appShardManager := services.GetAppShardManager()
+
+	logger.Log.Debugf("Shard %d handling message component %s for user %s",
+		appShardManager.ShardID, customID, userID)
 
 	switch {
 	case customID == "listaccounts":

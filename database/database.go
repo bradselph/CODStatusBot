@@ -137,12 +137,19 @@ func CleanupInvalidTimestamps() {
 func RunMigrations() {
 	logger.Log.Info("Running migrations")
 
+	if err := createShadowbanPeriodsTable(); err != nil {
+		logger.Log.WithError(err).Error("Failed to create shadowban_periods table")
+	}
+
 	CleanupInvalidTimestamps()
 
 	if !DB.Migrator().HasColumn(&models.Analytics{}, "shard_id") {
 		logger.Log.Info("Adding shard_id column to Analytics table")
 		if err := DB.Exec("ALTER TABLE analytics ADD COLUMN shard_id INT DEFAULT 0").Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to add shard_id column to Analytics table")
+		}
+		if err := DB.Exec("CREATE INDEX idx_analytics_shard_id ON analytics (shard_id)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to create shard_id index on Analytics table")
 		}
 	}
 
@@ -151,8 +158,36 @@ func RunMigrations() {
 		if err := DB.Exec("ALTER TABLE analytics ADD COLUMN instance_id VARCHAR(255) DEFAULT ''").Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to add instance_id column to Analytics table")
 		}
+		if err := DB.Exec("CREATE INDEX idx_analytics_instance_id ON analytics (instance_id)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to create instance_id index on Analytics table")
+		}
 	}
 
+	if !DB.Migrator().HasColumn(&models.ShardInfo{}, "startup_time") {
+		logger.Log.Info("Adding startup_time column to ShardInfo table")
+		if err := DB.Exec("ALTER TABLE shard_infos ADD COLUMN startup_time datetime(3)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add startup_time column to ShardInfo table")
+		}
+	}
+
+	if !DB.Migrator().HasColumn(&models.ShardInfo{}, "process_id") {
+		logger.Log.Info("Adding process_id column to ShardInfo table")
+		if err := DB.Exec("ALTER TABLE shard_infos ADD COLUMN process_id bigint").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add process_id column to ShardInfo table")
+		}
+	}
+
+	if !DB.Migrator().HasColumn(&models.ShardInfo{}, "hostname") {
+		logger.Log.Info("Adding hostname column to ShardInfo table")
+		if err := DB.Exec("ALTER TABLE shard_infos ADD COLUMN hostname varchar(255)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to add hostname column to ShardInfo table")
+		}
+		if err := DB.Exec("CREATE INDEX idx_shard_infos_hostname ON shard_infos (hostname)").Error; err != nil {
+			logger.Log.WithError(err).Error("Failed to create hostname index on ShardInfo table")
+		}
+	}
+
+	// Continue with existing migrations...
 	if !DB.Migrator().HasColumn(&models.Account{}, "game_specific_bans") {
 		logger.Log.Info("Adding game_specific_bans column to Account table")
 		if err := DB.Exec("ALTER TABLE accounts ADD COLUMN game_specific_bans JSON").Error; err != nil {
@@ -249,7 +284,6 @@ func RunMigrations() {
 		}
 	}
 
-	// Initialize JSON fields
 	if err := DB.Exec("UPDATE accounts SET game_specific_bans = '{}' WHERE game_specific_bans IS NULL OR game_specific_bans = ''").Error; err != nil {
 		logger.Log.WithError(err).Error("Failed to initialize game_specific_bans")
 	}
@@ -376,4 +410,36 @@ func MigrateFallbackDefaults() {
 			logger.Log.Infof("Successfully migrated %d users to default fallback setting", result.RowsAffected)
 		}
 	}
+}
+
+func createShadowbanPeriodsTable() error {
+	sql := `
+	CREATE TABLE IF NOT EXISTS shadowban_periods (
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		account_id BIGINT NOT NULL,
+		user_id VARCHAR(255) NOT NULL,
+		account_title VARCHAR(255) NOT NULL,
+		start_time DATETIME(3) NOT NULL,
+		end_time DATETIME(3) NULL,
+		duration_hours DOUBLE NULL,
+		is_completed BOOLEAN NOT NULL DEFAULT FALSE,
+		start_ban_id BIGINT NOT NULL,
+		end_ban_id BIGINT NULL,
+		created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+		updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+		INDEX idx_account_id (account_id),
+		INDEX idx_user_id (user_id),
+		INDEX idx_created_at (created_at),
+		INDEX idx_is_completed (is_completed),
+		INDEX idx_start_time (start_time),
+		INDEX idx_end_time (end_time)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+
+	if err := DB.Exec(sql).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to create shadowban_periods table")
+		return err
+	}
+
+	logger.Log.Info("Successfully created or verified shadowban_periods table")
+	return nil
 }

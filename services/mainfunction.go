@@ -37,16 +37,19 @@ func InitializeServices() {
 func CheckAccounts(s *discordgo.Session) {
 	logger.Log.Info("Starting periodic account check")
 	shardMgr := GetAppShardManager()
-	if !shardMgr.Initialized {
-		if err := shardMgr.Initialize(); err != nil {
-			logger.Log.WithError(err).Error("Failed to initialize app shard manager")
-			return
-		}
-	}
+
+	shardMgr.EnsureInitialized()
+
+	shardMgr.RLock()
+	shardID := shardMgr.ShardID
+	totalShards := shardMgr.TotalShards
+	instanceID := shardMgr.InstanceID
+	shardMgr.RUnlock()
 
 	var totalAccounts int64
 	var disabledAccounts int64
 	var expiredCookieAccounts int64
+	var shardAccounts int64
 
 	if err := database.DB.Model(&models.Account{}).Count(&totalAccounts).Error; err != nil {
 		logger.Log.WithError(err).Error("Failed to count total accounts")
@@ -61,65 +64,286 @@ func CheckAccounts(s *discordgo.Session) {
 		logger.Log.WithError(err).Error("Failed to count expired cookie accounts")
 	}
 
-	logger.Log.Infof("Account status summary: Total: %d, Disabled: %d, Expired Cookies: %d, Eligible for check: %d",
-		totalAccounts, disabledAccounts, expiredCookieAccounts, totalAccounts-disabledAccounts-expiredCookieAccounts)
-
 	var accounts []models.Account
 	if err := database.DB.Where("is_check_disabled = ? AND is_expired_cookie = ?", false, false).Find(&accounts).Error; err != nil {
 		logger.Log.WithError(err).Error("Failed to fetch accounts from database")
 		return
 	}
 
+	cfg := configuration.Get()
+	if cfg.Sharding.Enabled && shardMgr.Initialized && shardMgr.TotalShards > 1 {
+		accounts = FilterAccountsByShardAssignment(accounts)
+		shardAccounts = int64(len(accounts))
+		logger.Log.Infof("Sharding enabled - filtering %d accounts to %d for shard %d", int(totalAccounts), len(accounts), shardMgr.ShardID)
+	} else {
+		shardAccounts = int64(len(accounts))
+		logger.Log.Infof("Sharding disabled or failed - processing all %d accounts", len(accounts))
+	}
+
+	logger.Log.Infof("Shard %d/%d - Account status summary: Total Global: %d, Shard Assigned: %d, Disabled: %d, Expired Cookies: %d",
+		shardID, totalShards, totalAccounts, shardAccounts, disabledAccounts, expiredCookieAccounts)
+
 	accountsByUser := make(map[string][]models.Account)
+	skippedAccounts := 0
+
 	for _, account := range accounts {
 		if account.UserID == "" {
 			logger.Log.Warnf("Skipping account %s (ID: %d) with empty UserID", account.Title, account.ID)
+			skippedAccounts++
 			continue
 		}
+
+		if cfg.Sharding.Enabled && shardMgr.Initialized && shardMgr.TotalShards > 1 {
+			if !shardMgr.IsUserAssignedToShard(account.UserID) {
+				logger.Log.Debugf("Account %s (user %s) not assigned to this shard, skipping", account.Title, account.UserID)
+				skippedAccounts++
+				continue
+			}
+		}
+
 		accountsByUser[account.UserID] = append(accountsByUser[account.UserID], account)
 	}
 
 	processedCount := 0
-	skippedCount := 0
 	successfulChecks := 0
 	failedChecks := 0
 	start := time.Now()
 
 	for userID, userAccounts := range accountsByUser {
-		if !shardMgr.IsUserAssignedToShard(userID) {
-			skippedCount++
-			continue
+		if cfg.Sharding.Enabled && shardMgr.Initialized && shardMgr.TotalShards > 1 {
+			err := shardMgr.SafeShardOperation(userID, func() error {
+				userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
+				successfulChecks += userSuccess
+				failedChecks += userFailed
+				processedCount++
+				return nil
+			})
+
+			if err != nil {
+				logger.Log.WithError(err).Warnf("Skipped processing user %s due to shard assignment validation", userID)
+				skippedAccounts += len(userAccounts)
+			}
+		} else {
+			userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
+			successfulChecks += userSuccess
+			failedChecks += userFailed
+			processedCount++
 		}
-		userSuccess, userFailed := processUserAccountsWithStats(s, userID, userAccounts)
-		successfulChecks += userSuccess
-		failedChecks += userFailed
-		processedCount++
 	}
 
 	duration := time.Since(start).Seconds()
-	logger.Log.Infof("Completed periodic account check: processed %d users, skipped %d users, successful checks: %d, failed checks: %d, in %.2f seconds",
-		processedCount, skippedCount, successfulChecks, failedChecks, duration)
+	logger.Log.Infof("Shard %d/%d completed periodic account check: processed %d users (%d accounts), skipped %d accounts, successful checks: %d, failed checks: %d, in %.2f seconds",
+		shardID, totalShards, processedCount, len(accounts)-skippedAccounts, skippedAccounts, successfulChecks, failedChecks, duration)
 
-	if err := updateShardStats(shardMgr.InstanceID, processedCount, duration); err != nil {
+	if err := updateShardStats(instanceID, processedCount, successfulChecks, failedChecks, duration); err != nil {
 		logger.Log.WithError(err).Error("Failed to update shard stats")
 	}
+
+	LogAnalyticsEvent("shard_check_completed", "", "", "", "", shardID, instanceID, map[string]interface{}{
+		"processed_users":       processedCount,
+		"successful_checks":     successfulChecks,
+		"failed_checks":         failedChecks,
+		"duration_seconds":      duration,
+		"shard_accounts":        shardAccounts,
+		"skipped_accounts":      skippedAccounts,
+		"total_global_accounts": totalAccounts,
+	})
 }
-func updateShardStats(instanceID string, processedUsers int, durationSec float64) error {
-	stats := map[string]interface{}{
-		"last_check_time": time.Now(),
-		"processed_users": processedUsers,
-		"duration_sec":    durationSec,
+
+func LogAnalyticsEvent(eventType, userID, guildID, commandName, status string, shardID int, instanceID string, metadata map[string]interface{}) {
+	if eventType == "" {
+		logger.Log.Error("Analytics event type cannot be empty")
+		return
 	}
+
+	analytics := models.Analytics{
+		Type:        eventType,
+		UserID:      userID,
+		GuildID:     guildID,
+		CommandName: commandName,
+		Status:      status,
+		ShardID:     shardID,
+		InstanceID:  instanceID,
+		Timestamp:   time.Now(),
+		Day:         time.Now().Format("2006-01-02"),
+		Success:     true,
+	}
+
+	if metadata != nil {
+		if success, ok := metadata["success"].(bool); ok {
+			analytics.Success = success
+		}
+		if responseTime, ok := metadata["response_time_ms"].(int64); ok {
+			analytics.ResponseTimeMs = responseTime
+		}
+		if captchaProvider, ok := metadata["captcha_provider"].(string); ok {
+			analytics.CaptchaProvider = captchaProvider
+		}
+		if captchaCost, ok := metadata["captcha_cost"].(float64); ok {
+			analytics.CaptchaCost = captchaCost
+		}
+		if errorDetails, ok := metadata["error_details"].(string); ok {
+			analytics.ErrorDetails = errorDetails
+		}
+		if previousStatus, ok := metadata["previous_status"].(string); ok {
+			analytics.PreviousStatus = previousStatus
+		}
+		if accountID, ok := metadata["account_id"].(uint); ok {
+			analytics.AccountID = accountID
+		}
+	}
+
+	if err := database.DB.Create(&analytics).Error; err != nil {
+		logger.Log.WithError(err).WithField("event_type", eventType).
+			WithField("shard_id", shardID).
+			WithField("instance_id", instanceID).
+			Error("Failed to log analytics event")
+	} else {
+		logger.Log.Debugf("Logged analytics event: %s (shard %d, instance %s)", eventType, shardID, instanceID)
+	}
+}
+
+func LogStatusChange(accountID uint, userID string, newStatus, previousStatus models.Status) {
+	shardMgr := GetAppShardManager()
+
+	metadata := map[string]interface{}{
+		"account_id":      accountID,
+		"previous_status": string(previousStatus),
+		"new_status":      string(newStatus),
+		"status_changed":  previousStatus != newStatus,
+	}
+
+	LogAnalyticsEvent("status_change", userID, "", "", string(newStatus),
+		shardMgr.ShardID, shardMgr.InstanceID, metadata)
+}
+
+func LogAccountCheck(accountID uint, userID string, success bool, status models.Status, responseTimeMs int64, captchaProvider string, captchaCost float64, errorDetails string) {
+	shardMgr := GetAppShardManager()
+
+	metadata := map[string]interface{}{
+		"account_id":       accountID,
+		"success":          success,
+		"response_time_ms": responseTimeMs,
+		"captcha_provider": captchaProvider,
+		"captcha_cost":     captchaCost,
+		"check_type":       "automatic",
+	}
+
+	if errorDetails != "" {
+		metadata["error_details"] = errorDetails
+	}
+
+	eventStatus := string(status)
+	if !success {
+		eventStatus = "error"
+	}
+
+	LogAnalyticsEvent("account_check", userID, "", "", eventStatus,
+		shardMgr.ShardID, shardMgr.InstanceID, metadata)
+}
+
+func LogAccountStatusCheck(accountID uint, userID string, status models.Status, checkType, errorDetails string) {
+	shardMgr := GetAppShardManager()
+
+	metadata := map[string]interface{}{
+		"account_id": accountID,
+		"check_type": checkType,
+		"status":     string(status),
+	}
+
+	if errorDetails != "" {
+		metadata["error_details"] = errorDetails
+	}
+
+	LogAnalyticsEvent("account_status_check", userID, "", "", string(status),
+		shardMgr.ShardID, shardMgr.InstanceID, metadata)
+}
+
+func LogNotification(userID string, accountID uint, notificationType string, success bool) {
+	shardMgr := GetAppShardManager()
+
+	metadata := map[string]interface{}{
+		"account_id":        accountID,
+		"notification_type": notificationType,
+		"success":           success,
+		"delivery_method":   "discord",
+	}
+
+	eventStatus := "delivered"
+	if !success {
+		eventStatus = "failed"
+	}
+
+	LogAnalyticsEvent("notification", userID, "", "", eventStatus,
+		shardMgr.ShardID, shardMgr.InstanceID, metadata)
+}
+
+func updateShardStats(instanceID string, processedUsers, successfulChecks, failedChecks int, durationSec float64) error {
+	totalChecks := successfulChecks + failedChecks
+
+	var checkRate float64
+	if durationSec > 0 {
+		checkRate = float64(totalChecks) / durationSec
+	} else {
+		checkRate = 0
+	}
+
+	var successRate float64
+	if totalChecks > 0 {
+		successRate = float64(successfulChecks) / float64(totalChecks) * 100
+	} else {
+		successRate = 0
+	}
+
+	stats := map[string]interface{}{
+		"last_check_time":   time.Now(),
+		"processed_users":   processedUsers,
+		"successful_checks": successfulChecks,
+		"failed_checks":     failedChecks,
+		"duration_sec":      durationSec,
+		"check_rate":        checkRate,
+		"success_rate":      successRate,
+	}
+
 	statJSON, err := json.Marshal(stats)
 	if err != nil {
 		return err
 	}
+
 	return database.DB.Model(&models.ShardInfo{}).
 		Where("instance_id = ?", instanceID).
 		Update("stats", string(statJSON)).Error
 }
 
+func CheckAccountWithRetry(ssoCookie, userID, captchaProvider string) (models.Status, error) {
+	maxRetries := 3
+	baseDelay := time.Second
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			logger.Log.Debugf("Retrying account check for user %s in %v (attempt %d/%d)", userID, delay, attempt+1, maxRetries)
+			time.Sleep(delay)
+		}
+
+		result, err := CheckAccount(ssoCookie, userID, captchaProvider)
+		if err == nil {
+			return result, nil
+		}
+
+		if attempt == maxRetries-1 {
+			return models.StatusUnknown, err
+		}
+
+		logger.Log.WithError(err).Warnf("Account check attempt %d/%d failed for user %s", attempt+1, maxRetries, userID)
+	}
+
+	return models.StatusUnknown, fmt.Errorf("all retry attempts failed")
+}
+
 func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus models.Status, userSettings *models.UserSettings) {
+	shardMgr := GetAppShardManager()
+
 	if account.IsPermabanned && newStatus == models.StatusPermaban {
 		if account.LastNotification != 0 {
 			logger.Log.Debugf("Account %s already notified of permaban, skipping notification", account.Title)
@@ -139,8 +363,8 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 	}
 
 	if statusChanged || gameSpecificChanged {
-		logger.Log.Debugf("Status change detected for account %s: %s -> %s (Game-specific changes: %v)",
-			account.Title, account.LastStatus, newStatus, gameSpecificChanged)
+		logger.Log.Debugf("Shard %d - Status change detected for account %s: %s -> %s (Game-specific changes: %v)",
+			shardMgr.ShardID, account.Title, account.LastStatus, newStatus, gameSpecificChanged)
 
 		DBMutex.Lock()
 		defer DBMutex.Unlock()
@@ -188,7 +412,8 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 		if err := database.DB.Create(&statusLog).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to create status log")
 		} else {
-			logger.Log.Infof("Created status change log for account %s: %s -> %s", account.Title, previousStatus, newStatus)
+			logger.Log.Infof("Shard %d - Created status change log for account %s: %s -> %s",
+				shardMgr.ShardID, account.Title, previousStatus, newStatus)
 		}
 
 		ban := models.Ban{
@@ -204,10 +429,17 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 			ban.AffectedGames = statusLog.AffectedGames
 		}
 
+		var banID uint
 		if err := database.DB.Create(&ban).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to create ban record")
 		} else {
-			logger.Log.Infof("Created ban record for account %s: %s -> %s", account.Title, previousStatus, newStatus)
+			banID = ban.ID
+			logger.Log.Infof("Shard %d - Created ban record for account %s: %s -> %s",
+				shardMgr.ShardID, account.Title, previousStatus, newStatus)
+		}
+
+		if err := TrackShadowbanTransition(account.ID, account.UserID, previousStatus, newStatus, banID); err != nil {
+			logger.Log.WithError(err).Error("Failed to track shadowban transition")
 		}
 
 		LogStatusChange(account.ID, account.UserID, newStatus, previousStatus)
@@ -237,6 +469,13 @@ func HandleStatusChange(s *discordgo.Session, account models.Account, newStatus 
 		if err := database.DB.Save(&account).Error; err != nil {
 			logger.Log.WithError(err).Error("Failed to save final account status")
 		}
+
+		LogAnalyticsEvent("status_change", account.UserID, "", "", string(newStatus), shardMgr.ShardID, shardMgr.InstanceID, map[string]interface{}{
+			"account_id":      account.ID,
+			"previous_status": string(previousStatus),
+			"new_status":      string(newStatus),
+			"account_title":   account.Title,
+		})
 	}
 }
 
@@ -543,7 +782,8 @@ func disableAccount(s *discordgo.Session, account models.Account, reason string)
 		return
 	}
 
-	logger.Log.Infof("Account %s has been disabled. Reason: %s", account.Title, reason)
+	shardMgr := GetAppShardManager()
+	logger.Log.Infof("Shard %d - Account %s has been disabled. Reason: %s", shardMgr.ShardID, account.Title, reason)
 	NotifyUserAboutDisabledAccount(s, account, reason)
 }
 

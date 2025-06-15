@@ -98,11 +98,10 @@ func ValidateCheckInterval(interval int) error {
 		return ValidationError{"check_interval", "Check interval must be at least 1 minute"}
 	}
 
-	if interval > 1440 { // 24 hours
+	if interval > 1440 {
 		return ValidationError{"check_interval", "Check interval cannot be longer than 24 hours (1440 minutes)"}
 	}
 
-	// For users without custom API keys, enforce minimum interval
 	if interval < cfg.Intervals.Check {
 		return ValidationError{"check_interval", fmt.Sprintf("Check interval must be at least %d minutes for default users", cfg.Intervals.Check)}
 	}
@@ -115,7 +114,7 @@ func ValidateNotificationInterval(interval float64) error {
 		return ValidationError{"notification_interval", "Notification interval must be at least 0.5 hours"}
 	}
 
-	if interval > 168 { // 7 days
+	if interval > 168 {
 		return ValidationError{"notification_interval", "Notification interval cannot be longer than 7 days (168 hours)"}
 	}
 

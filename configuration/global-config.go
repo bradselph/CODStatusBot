@@ -603,16 +603,22 @@ func loadShardingConfig() {
 
 	if AppConfig.Sharding.Enabled {
 		if AppConfig.Sharding.TotalShards < 1 {
-			logger.Log.Warn("Invalid TOTAL_SHARDS value, must be at least 1. Setting to 1.")
+			logger.Log.Warn("Invalid TOTAL_SHARDS value, disabling sharding")
+			AppConfig.Sharding.Enabled = false
 			AppConfig.Sharding.TotalShards = 1
-		}
-
-		if AppConfig.Sharding.ShardID < 0 || AppConfig.Sharding.ShardID >= AppConfig.Sharding.TotalShards {
-			logger.Log.Warnf("Invalid SHARD_ID %d for TOTAL_SHARDS %d. Setting to 0.",
-				AppConfig.Sharding.ShardID, AppConfig.Sharding.TotalShards)
 			AppConfig.Sharding.ShardID = 0
 		}
 
+		if AppConfig.Sharding.ShardID < 0 || AppConfig.Sharding.ShardID >= AppConfig.Sharding.TotalShards {
+			logger.Log.Warnf("Invalid SHARD_ID %d for TOTAL_SHARDS %d, disabling sharding",
+				AppConfig.Sharding.ShardID, AppConfig.Sharding.TotalShards)
+			AppConfig.Sharding.Enabled = false
+			AppConfig.Sharding.TotalShards = 1
+			AppConfig.Sharding.ShardID = 0
+		}
+	}
+
+	if AppConfig.Sharding.Enabled {
 		logger.Log.Infof("Sharding enabled: This is shard %d of %d",
 			AppConfig.Sharding.ShardID, AppConfig.Sharding.TotalShards)
 	} else {

@@ -116,10 +116,13 @@ type ShardInfo struct { // Information about application shards
 	gorm.Model
 	ShardID       int       `gorm:"index"` // The shard ID
 	TotalShards   int       // The total number of shards
-	InstanceID    string    `gorm:"uniqueIndex"`      // Unique identifier for this instance
-	LastHeartbeat time.Time `gorm:"index"`            // Last time this shard reported as alive
-	Status        string    `gorm:"default:'active'"` // Status of this shard: active, inactive
-	Stats         string    `gorm:"type:text"`        // JSON encoded stats about this shard
+	InstanceID    string    `gorm:"uniqueIndex"`            // Unique identifier for this instance
+	LastHeartbeat time.Time `gorm:"index"`                  // Last time this shard reported as alive
+	Status        string    `gorm:"default:'active';index"` // Status of this shard: active, inactive, shutdown
+	Stats         string    `gorm:"type:text"`              // JSON encoded stats about this shard
+	StartupTime   time.Time `gorm:"index"`                  // When this shard instance started
+	ProcessID     int64     // Process ID of the shard instance
+	Hostname      string    `gorm:"index"` // Hostname where shard is running
 }
 
 type ProxyStats struct { // Statistics about HTTP proxies

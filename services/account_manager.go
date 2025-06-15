@@ -157,13 +157,13 @@ func processUserAccountsWithStats(s *discordgo.Session, userID string, accounts 
 
 		if err != nil {
 			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
-			LogAccountCheck(account.ID, userID, models.StatusUnknown, false, userSettings.PreferredCaptchaProvider, 0, responseTime)
+			LogAccountCheck(account.ID, userID, false, models.StatusUnknown, responseTime, userSettings.PreferredCaptchaProvider, 0, "Check failed")
 			handleCheckError(s, &account, err)
 			failedChecks++
 			continue
 		}
 
-		LogAccountCheck(account.ID, userID, result, true, userSettings.PreferredCaptchaProvider, 0, responseTime)
+		LogAccountCheck(account.ID, userID, true, result, responseTime, userSettings.PreferredCaptchaProvider, 0, "")
 		successfulChecks++
 		now := time.Now()
 		account.LastCheck = now.Unix()
@@ -249,12 +249,12 @@ func processUserAccounts(s *discordgo.Session, userID string, accounts []models.
 
 		if err != nil {
 			logger.Log.WithError(err).Errorf("Failed to check account %s: %v", account.Title, err)
-			LogAccountCheck(account.ID, userID, models.StatusUnknown, false, userSettings.PreferredCaptchaProvider, 0, responseTime)
+			LogAccountCheck(account.ID, userID, false, models.StatusUnknown, responseTime, userSettings.PreferredCaptchaProvider, 0, "Check failed")
 			handleCheckError(s, &account, err)
 			continue
 		}
 
-		LogAccountCheck(account.ID, userID, result, true, userSettings.PreferredCaptchaProvider, 0, responseTime)
+		LogAccountCheck(account.ID, userID, true, result, responseTime, userSettings.PreferredCaptchaProvider, 0, "")
 		now := time.Now()
 		account.LastCheck = now.Unix()
 		account.LastSuccessfulCheck = now

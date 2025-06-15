@@ -162,35 +162,41 @@ func GetInstallationStats() (serverCount int64, directCount int64, err error) {
 	return
 }
 
-func LogInstallationStats(s *discordgo.Session) {
-	var stats struct {
-		TotalUsers     int64
-		ActiveUsers    int64
-		TotalAccounts  int64
-		ActiveAccounts int64
-		TotalGuilds    int64
-		UserInstalls   int64
-		GuildInstalls  int64
+func LogInstallationStats(s interface{}) {
+	shardMgr := GetAppShardManager()
+	if !shardMgr.IsLeader() {
+		return
 	}
 
-	database.DB.Model(&models.UserSettings{}).Count(&stats.TotalUsers)
-	database.DB.Model(&models.UserSettings{}).Where("updated_at > ?", time.Now().Add(-7*24*time.Hour)).Count(&stats.ActiveUsers)
-	database.DB.Model(&models.Account{}).Count(&stats.TotalAccounts)
-	database.DB.Model(&models.Account{}).Where("is_check_disabled = ? AND is_expired_cookie = ?", false, false).Count(&stats.ActiveAccounts)
-	database.DB.Model(&models.UserSettings{}).Where("installation_type = ?", "direct").Count(&stats.UserInstalls)
-	database.DB.Model(&models.UserSettings{}).Where("installation_type = ?", "server").Count(&stats.GuildInstalls)
+	var serverInstalls int64
+	var directInstalls int64
+	var totalUsers int64
 
-	distinctGuilds := make(map[string]bool)
-	var userSettings []models.UserSettings
-	if err := database.DB.Select("installation_guild_id").Where("installation_guild_id != ''").Find(&userSettings).Error; err == nil {
-		for _, us := range userSettings {
-			if us.InstallationGuildID != "" {
-				distinctGuilds[us.InstallationGuildID] = true
-			}
-		}
+	if err := database.DB.Model(&models.UserSettings{}).Count(&totalUsers).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count total users for installation stats")
+		return
 	}
-	stats.TotalGuilds = int64(len(distinctGuilds))
 
-	logger.Log.Infof("Installation Stats - Total Users: %d, Active Users (7d): %d, Total Accounts: %d, Active Accounts: %d, Total Guilds: %d, User Installs: %d, Guild Installs: %d",
-		stats.TotalUsers, stats.ActiveUsers, stats.TotalAccounts, stats.ActiveAccounts, stats.TotalGuilds, stats.UserInstalls, stats.GuildInstalls)
+	if err := database.DB.Model(&models.UserSettings{}).
+		Where("installation_type = ?", "server").Count(&serverInstalls).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count server installations")
+	}
+
+	if err := database.DB.Model(&models.UserSettings{}).
+		Where("installation_type = ?", "direct").Count(&directInstalls).Error; err != nil {
+		logger.Log.WithError(err).Error("Failed to count direct installations")
+	}
+
+	metadata := map[string]interface{}{
+		"total_users":     totalUsers,
+		"server_installs": serverInstalls,
+		"direct_installs": directInstalls,
+		"stats_type":      "daily_installation_summary",
+	}
+
+	LogAnalyticsEvent("installation_stats", "", "", "", "info",
+		shardMgr.ShardID, shardMgr.InstanceID, metadata)
+
+	logger.Log.Infof("Logged installation stats: Total: %d, Server: %d, Direct: %d",
+		totalUsers, serverInstalls, directInstalls)
 }
