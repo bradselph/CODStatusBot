@@ -1,3 +1,40 @@
+# COD Status Bot - Critical Update
+
+## Bot Archival Notice
+
+Due to recent Activision changes to SSO cookie expiration times (from 14 days to 1 hour), this bot will likely be archived soon.
+
+## The Problem
+
+- SSO cookies now expire every hour instead of every 14 days
+- Users would need to update cookies every hour for the bot to function
+- This makes the bot practically unusable
+
+## Why Not Store Login Credentials?
+
+I will not implement credential storage due to:
+- Security risks for user accounts
+- Liability concerns for account compromises
+- Privacy and trust principles
+
+## Future Plans
+
+Considering a desktop application that would:
+- Keep user credentials local and secure
+- Provide enhanced features
+- Give users full control over their data
+
+## Status
+
+- Bot remains functional for now with manual cookie updates
+- Archival timeline depends on usage patterns and community feedback
+- No ETA on potential desktop replacement
+
+Thank you for your understanding. User security comes first.
+
+
+----
+
 # COD Status Bot
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/bradselph/CODStatusBot)](https://goreportcard.com/report/github.com/bradselph/CODStatusBot)
